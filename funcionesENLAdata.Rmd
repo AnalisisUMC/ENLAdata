@@ -1,0 +1,2662 @@
+---
+title: "Resultados ENLA"
+author: ""
+date: ""
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    vertical_layout: fill
+    logo: "02 Logos/umc2.jpg"
+    theme: bootstrap
+runtime: shiny
+---
+
+```{r Preámbulo}
+
+rm(list=ls()) #Limpiar interfase
+
+options(scipen = 999) #Sin notación científica
+
+```
+
+```{r Librerías}
+
+library(foreign)
+library(haven)
+library(openxlsx)
+library(readxl)
+library(tidyverse)
+library(ggplot2)
+library(fst)
+library(ggpubr)
+library(flexdashboard)
+library(shiny)
+library(DT)
+library(sf)
+
+```
+
+```{r Funciones generales}
+
+#Conteo de missing en todas las variables#
+#----------------------------------------#
+
+funmiss <- function(x) {sum(is.na(x))/length(x)*100}
+
+#Media pesada# 
+#------------#
+
+weighted_mean <- function(x, w, ..., na.rm = FALSE){
+  
+  if(na.rm){
+    
+    df_omit <- na.omit(data.frame(x, w))
+    
+    return(weighted.mean(df_omit$x, df_omit$w, ...))
+    
+  } 
+  
+  weighted.mean(x, w, ...)
+}
+
+lamoda_pesos <- function(x, weights = NULL) {
+  if (is.null(weights)) {
+    u <- unique(x)
+    tab <- tabulate(match(x, u))
+    u[tab == max(tab)]
+  } else {
+    # Verificar que la longitud de 'x' y 'weights' sea la misma
+    if (length(x) != length(weights)) {
+      stop("La longitud de 'x' y 'weights' debe ser la misma.")
+    }
+    
+    # Crear una tabla de frecuencia ponderada
+    df <- data.frame(x, weights)
+    df <- df[order(df$x), ]
+    df <- df[!duplicated(df$x), ]
+    df$weighted_freq <- ave(df$weights, df$x, FUN = sum)
+    
+    # Encontrar la moda basada en las frecuencias ponderadas
+    moda <- df[df$weighted_freq == max(df$weighted_freq), "x"]
+    moda
+  }
+}
+
+#Redondear#
+#---------#
+
+redondear<-function(x,d=0){
+  (floor(x*10**d)+as.numeric((x*10**d-floor(x*10**d))>=0.5))/10**d
+}
+
+#Cambiar punto por coma decimal#
+#------------------------------#
+
+puntocoma2<-function(x,dec=0){
+  if(is.numeric(x)){
+    if(length(dim(x))==2){
+      gsub("\\.",",",apply(redondear(x,dec), 2, sprintf,fmt=paste0("%.",dec,"f")))
+    }else{gsub("\\.",",",sprintf(paste0("%.",dec,"f"), redondear(x,dec)))}
+  }else{
+    if(length(dim(x))==2){
+      redondear(apply(gsub(",","\\.",x),2,as.numeric),dec)
+    }else{redondear(as.numeric(gsub(",","\\.",x)),dec)}
+  }
+  
+} 
+
+#Colores#
+#-------#
+
+cmyk2rgb<- function(c=0, m=0, y=0, k=0){
+  r=255*((1-c)*(1-k))
+  g=255*((1-m)*(1-k))
+  b=255*((1-y)*(1-k))
+  
+  return(round(c(r,g,b),0))
+}
+
+cmyk2hex<-function(c = 0,m = 0,y = 0,k = 0){
+  ve<-cmyk2rgb(c,m,y,k)
+  rgb(ve[1],ve[2],ve[3],maxColorValue = 255)
+}
+
+
+#Colores UMC
+
+color_pre_in <- '#A5A5A5'
+color_inicio <- '#A74D4B'
+color_proces <- '#F79646'
+color_satisf <- '#9BBB59'
+
+str_wrap_factor <- function(x, ...) {
+  levels(x) <- str_wrap(levels(x), ...)
+  x
+}
+
+```
+
+```{r Bases de datos}
+
+#===============================#
+# Bases de datos con resultados #
+#===============================#
+
+bd_int <- read.xlsx("01 Bases/bd_integrada.xlsx") %>% 
+  filter(!(valor_estrat %in% c("Ayacucho","Cajamarca") & Año %in% c("2008","2009","2010","2011"))) %>% 
+  filter(!(valor_estrat %in% c("Huancavelica") & Año %in% c("2008","2009"))) %>% 
+  filter(!(valor_estrat %in% c("Puno") & Año %in% c("2008","2010")))
+
+bd_dre_estrat <- read.xlsx("01 Bases/bd_dre_estrat_int.xlsx") %>% 
+  filter(!(nom_DRE %in% c("Ayacucho","Cajamarca") & Año %in% c("2008","2009","2010","2011"))) %>% 
+  filter(!(nom_DRE %in% c("Huancavelica") & Año %in% c("2008","2009"))) %>% 
+  filter(!(nom_DRE %in% c("Puno") & Año %in% c("2008","2010")))
+
+#============#
+# operativos #
+#============#
+
+opera_nac <- data.frame(
+  año = c(2007, 2008, 2009, 2010, 2011, 2012, 2013, 2014, 2015, 2016,
+          2018, 2019, 2022, 2023, 2016, 2018, 2019, 2022, 2023,
+          2015, 2016, 2018, 2019, 2022, 2023),
+  grado = c("2.° grado de primaria", "2.° grado de primaria", "2.° grado de primaria", 
+            "2.° grado de primaria", "2.° grado de primaria", "2.° grado de primaria",
+            "2.° grado de primaria", "2.° grado de primaria", "2.° grado de primaria",
+            "2.° grado de primaria", "2.° grado de primaria", "2.° grado de primaria",
+            "2.° grado de primaria", "2.° grado de primaria", "4.° grado de primaria",
+            "4.° grado de primaria", "4.° grado de primaria", "4.° grado de primaria",
+            "4.° grado de primaria", "2.° grado de secundaria", "2.° grado de secundaria",
+            "2.° grado de secundaria", "2.° grado de secundaria", "2.° grado de secundaria",
+            "2.° grado de secundaria"),
+  operativo = c("Censal", "Censal", "Censal", "Censal", "Censal", "Censal",
+                "Censal", "Censal", "Censal", "Censal", "Muestral nacional",
+                "Muestral nacional y regional", "Muestral nacional y regional",
+                "Muestral nacional", "Censal", "Censal", "Muestral nacional y regional",
+                "Muestral nacional y regional", "Muestral nacional y regional",
+                "Censal", "Censal", "Censal", "Censal", "Muestral nacional y regional",
+                "Muestral nacional y regional")
+) %>% 
+  mutate(año = as.character(año))
+
+#========#
+# UGELES #
+#========#
+
+bd_ugel <- read.xlsx("01 Bases/bd_dre_ugel_int.xlsx")
+
+#============#
+# Mapas Perú #
+#============#
+
+mapa_peru <- read_sf("01 Bases/Shapes_departamentos/DEPARTAMENTOS.shp")
+mapa_peru2 <- read_sf("01 Bases/Shapes_provincias/PROVINCIAS.shp")
+
+```
+
+```{r Formato de base de datos nacional por año}
+
+bd_nac_x <- bd_int %>% 
+  filter(tip_estrat %in% "Nacional") %>% 
+  select(grado,area_eval, Año,valor_tipo,ptot) %>% 
+  mutate(valor_tipo = factor(valor_tipo,
+                             levels = c("Previo al inicio",
+                                        "En inicio",
+                                        "En proceso",
+                                        "Satisfactorio")))
+
+```
+
+# Nacional {data-icon="fa-home"}
+
+Column 
+-------------------------------------
+
+## Selección {.sidebar}
+
+```{r Barra lateral}
+
+fluidRow(
+  inputPanel(
+    selectInput('x_input', 
+                label = 'Selecciona el grado:', 
+                choices = unique(bd_nac_x$grado)),
+    selectInput('y_input', 
+                label = 'Selecciona el año:', 
+                choices = NULL),
+    selectInput('z_input', 
+                label = 'Selecciona el área evaluada:', 
+                choices = NULL),
+    downloadButton("download_plot", "Descargar gráfico")
+)
+)
+
+#Relacionando los años evaluados con el grado correspondiente
+
+observeEvent(input$x_input, {
+  
+  anhos <- switch(input$x_input,
+                  "2.° grado de primaria" = unique(bd_nac_x %>% filter(grado == "2.° grado de primaria") %>% pull(Año) %>% sort(decreasing  = T)),
+                  "4.° grado de primaria" = unique(bd_nac_x %>% filter(grado == "4.° grado de primaria") %>% pull(Año) %>% sort(decreasing  = T)),
+                  "2.° grado de secundaria" = unique(bd_nac_x %>% filter(grado == "2.° grado de secundaria") %>% pull(Año) %>% sort(decreasing  = T))
+  )
+  
+  updateSelectInput(session, "y_input", choices = anhos)
+  
+})
+
+#Relacionando el área evaluada con los grados evaluados con el grado correspondiente
+
+observeEvent(c(input$x_input, input$y_input), {
+  if (input$x_input == "2.° grado de secundaria") {
+    areas <- switch(input$y_input,
+                    "2015" = c("Matemática", "Lectura"),
+                    "2016" = c("Matemática", "Lectura","Ciencias sociales"),
+                    "2018" = c("Matemática", "Lectura", "Ciencias sociales", "Ciencia y tecnología"),
+                    "2019" = c("Matemática", "Lectura", "Ciencia y tecnología"),
+                    "2022" = c("Matemática", "Lectura", "Ciencia y tecnología"),
+                    "2023" = c("Matemática", "Lectura", "Ciencias sociales"),
+                    c())
+  } else  if (input$x_input == "2.° grado de primaria") {
+    areas <- switch(input$y_input,
+                    "2007" = c("Matemática", "Lectura"),
+                    "2008" = c("Matemática", "Lectura"),
+                    "2009" = c("Matemática", "Lectura"),
+                    "2010" = c("Matemática", "Lectura"),
+                    "2011" = c("Matemática", "Lectura"),
+                    "2012" = c("Matemática", "Lectura"),
+                    "2013" = c("Matemática", "Lectura"),
+                    "2014" = c("Matemática", "Lectura"),
+                    "2015" = c("Matemática", "Lectura"),
+                    "2016" = c("Matemática", "Lectura"),
+                    "2018" = c("Matemática", "Lectura"),
+                    "2019" = c("Matemática", "Lectura"),
+                    "2022" = c("Matemática", "Lectura"),
+                    "2023" = c("Matemática", "Lectura"),
+                    c())
+  } else  if (input$x_input == "4.° grado de primaria") {
+    areas <- switch(input$y_input,
+                    "2016" = c("Matemática", "Lectura"),
+                    "2018" = c("Matemática", "Lectura"),
+                    "2019" = c("Matemática", "Lectura"),
+                    "2022" = c("Matemática", "Lectura"),
+                    "2023" = c("Matemática", "Lectura"),
+                    c())
+  } else {
+    areas <- NULL
+  }
+  
+  updateSelectInput(session, "z_input", choices = areas)
+}
+)
+
+output$download_plot <- downloadHandler(
+    filename = function() {
+      paste("grafico_", Sys.Date(), ".png", sep = "")
+    },
+    content = function(file) {
+      # Guardar el gráfico como archivo PNG
+      ggsave(file, plot = last_plot(), device = "png", width = 10, height = 6)
+    }
+  )
+
+```
+
+Row {data-height=9000}
+-------------------------------------
+
+### **Resultado nacional** {data-width=600}
+
+```{r Gráfico resultados nacionales}
+
+renderPlot({
+  
+  t1 <- bd_nac_x %>%
+    filter(grado == input$x_input) %>%
+    filter(Año == input$y_input) %>%
+    filter(area_eval == input$z_input)
+  
+  num <- length(unique(t1$valor_tipo))
+  
+  pos <- t1 %>%
+    pivot_wider(names_from = valor_tipo, values_from = ptot)
+  
+  if (num == 4) {
+    
+    colnames(pos)[4:7] <- c("n_in", "n_pr", "n_pi", "n_sa")
+    
+    pos1 <- pos %>%
+      mutate(pos_sa = case_when(n_sa >= 15 ~ n_sa/2,
+                                TRUE ~ n_sa + 10),
+             pos_pr = n_pr/2,
+             pos_in = n_pr + n_in/2,
+             pos_pi = case_when(n_pi >= 15 ~ n_pr + n_in + n_pi/2,
+                                TRUE ~ n_pr + n_in + n_pi + 10)) %>%
+      mutate(pos_pr = pos_pr*-1,
+             pos_in = pos_in*-1,
+             pos_pi = pos_pi*-1)
+    
+    pos2 <- pos1 %>%
+      pivot_longer(cols = starts_with("pos_"),
+                   names_to = "niv_log",
+                   values_to = "posit") %>%
+      mutate(valor_tipo = case_when(niv_log == "pos_sa" ~ "Satisfactorio",
+                                    niv_log == "pos_pr" ~ "En proceso",
+                                    niv_log == "pos_in" ~ "En inicio",
+                                    TRUE ~ "Previo al inicio")) %>% 
+      select(grado,area_eval,valor_tipo,posit)
+    
+    niveles <- t1 %>%
+      left_join(pos2, by = c("grado","area_eval", "valor_tipo")) %>%
+      mutate(m_etiq = puntocoma2(ptot,1),
+             ptot = case_when(valor_tipo != "Satisfactorio" ~ ptot*-1,
+                              TRUE ~ ptot)) %>%
+      mutate(nom_eje = "Nacional",
+             valor_tipo = factor(valor_tipo,
+                                 levels = c("Previo al inicio",
+                                            "En inicio",
+                                            "En proceso",
+                                            "Satisfactorio")))
+    
+    ggplot(niveles, aes(x = nom_eje, y = ptot)) +
+      geom_col(width = 0.16, 
+               aes(fill = valor_tipo)) +
+      scale_fill_manual(values = c(color_pre_in,color_inicio, color_proces, color_satisf))  +
+      scale_y_continuous(limits = c(-110, 110), n.breaks = 9) +
+      theme_bw() +
+      theme(panel.border = element_blank(),
+            panel.grid = element_blank(),
+            legend.position = "bottom",
+            legend.title = element_blank(),
+            legend.text = element_text(size = 16),
+            axis.text.y = element_blank(),
+            axis.text.x = element_text(size = 18, 
+                                       color = "black"),
+            axis.ticks = element_blank(),
+            axis.title = element_blank(),
+            plot.title = element_text(hjust = 0.5, 
+                                      size = 20),
+            plot.subtitle = element_text(hjust = 0.5,
+                                         size = 18)) +
+      geom_segment(aes(x=0.8, xend=1.2, y=0, yend=0), color="#737373", linewidth = 0.5) +
+      geom_text(data = niveles, aes(label = m_etiq, y = posit), size = 6.5, color = "black") +
+      labs(title = input$x_input,
+           subtitle = input$z_input
+      )
+    
+  } else if (num == 3) {
+    
+    colnames(pos)[4:6] <- c("n_in", "n_pr", "n_sa")
+    
+    pos1 <- pos %>%
+      mutate(pos_sa = case_when(n_sa >= 15 ~ n_sa/2,
+                                TRUE ~ n_sa + 10),
+             pos_pr = n_pr/2,
+             pos_in = case_when(n_in >= 15 ~ n_pr + n_in/2,
+                                TRUE ~ n_pr + n_in + 10)) %>%
+      mutate(pos_pr = pos_pr * -1,
+             pos_in = pos_in * -1)
+    
+    pos2 <- pos1 %>%
+      pivot_longer(cols = starts_with("pos_"),
+                   names_to = "niv_log",
+                   values_to = "posit") %>%
+      mutate(valor_tipo = case_when(
+        niv_log == "pos_sa" ~ "Satisfactorio",
+        niv_log == "pos_pr" ~ "En proceso",
+        TRUE ~ "En inicio"))
+    
+    niveles <- t1 %>%
+      left_join(pos2, by = c("grado","area_eval", "valor_tipo")) %>%
+      mutate(m_etiq = puntocoma2(ptot,1),
+             ptot = case_when(valor_tipo != "Satisfactorio" ~ ptot*-1,
+                              TRUE ~ ptot)) %>%
+      mutate(nom_eje = "Nacional",
+             valor_tipo = factor(valor_tipo,
+                                 levels = c("En inicio",
+                                            "En proceso",
+                                            "Satisfactorio")))
+    
+    ggplot(niveles, aes(x = nom_eje,
+                              y = ptot)) +
+      geom_col(width = 0.16, 
+               aes(fill = valor_tipo)) +
+      scale_fill_manual(values = c(color_inicio, color_proces, color_satisf))  +
+      scale_y_continuous(limits = c(-110, 110), n.breaks = 9) +
+      theme_bw() +
+      theme(panel.border = element_blank(),
+            panel.grid = element_blank(),
+            legend.position = "bottom",
+            legend.title = element_blank(),
+            legend.text = element_text(size = 16),
+            axis.text.y = element_blank(),
+            axis.text.x = element_text(size = 18, color = "black"),
+            axis.ticks = element_blank(),
+            axis.title = element_blank(),
+            plot.title = element_text(hjust = 0.5, 
+                                      size = 20),
+            plot.subtitle = element_text(hjust = 0.5,
+                                         size = 18)) +
+      geom_segment(aes(x=0.8, xend=1.2, y=0, yend=0), color="#737373", linewidth = 0.5) +
+      geom_text(data = niveles, aes(label = m_etiq, y = posit), size = 6.5, color = "black") +
+      labs(title = input$x_input,
+           subtitle = input$z_input
+      )
+  }
+
+}
+)
+
+```
+
+### **Indicaciones generales** 
+
+<div style="font-size: 13px; font-family: 'Verdana', sans-serif;">
+
+**<u>Definiciones de niveles de logro</u>**
+
+$\color{#9BBB59}{\text{Satisfactorio}}$: El estudiante logró los aprendizajes esperados para su ciclo y está preparado para afrontar los retos de aprendizaje del ciclo siguiente.
+
+$\color{#F79646}{\text{En proceso}}$: El estudiante logró parcialmente los aprendizajes esperados para su ciclo. Se encuentra en camino de lograrlos, pero todavía tiene dificultades.
+
+$\color{#A74D4B}{\text{En inicio}}$: El estudiante logró aprendizajes muy elementales respecto de lo que se espera para su ciclo.
+
+$\color{#A5A5A5}{\text{Previo al inicio}}$: El estudiante no logró los aprendizajes necesarios para estar en el nivel En inicio.
+
+**<u>Descarga de los datos</u>**
+
+- Para descargar los resultados de la tabla de abajo, hacer click en el botón que dice **"Descargar tabla en excel"**.
+- Para descargar el gráfico de resultados, hacer click en el botón del lado izquierdo que dice **"Descargar gráfico"**.
+
+**<u>Observaciones</u>**
+
+- Las regiones de Ayacucho, Cajamarca, Huancavelica y Puno no presentan resultados en algunos años debido a que no alcanzaron la cobertura de estudiantes requerida para obtener resultados confiables (80,0%). Específicamente, Ayacucho y Cajamarca no tienen datos disponibles para los años 2008, 2009, 2010 y 2011; Huancavelica no cuenta con resultados para 2008 y 2009; mientras que Puno carece de datos para 2008 y 2010.
+
+</div>
+
+Row 
+-------------------------------------
+
+## **Resultados por region** {data-height=9000} 
+
+```{r Tabla resultados}
+
+renderDT({
+
+  t2 <- bd_int %>%
+    filter(grado == input$x_input) %>%
+    filter(Año == input$y_input) %>%
+    filter(area_eval == input$z_input) %>%
+    filter(tip_estrat %in% c("DRE", "Nacional")) %>%
+    rename(año = Año) %>%
+    left_join(opera_nac, by = c("grado", "año")) %>%
+    filter(
+      case_when(operativo == "Muestral nacional" ~ tip_estrat != "DRE",
+                TRUE ~ TRUE )
+    )
+
+  num2 <- length(unique(t2$valor_tipo))
+
+  if (num2 == 3) {
+    
+    t2 %>%
+      dplyr::select(año,grado,area_eval,operativo,valor_estrat,valor_tipo,ptot) %>%
+      mutate(ptot = paste0(puntocoma2(ptot,1),"%") ) %>% 
+      pivot_wider(names_from = valor_tipo,
+                  values_from = ptot) %>%
+      dplyr::select(Año = año, Operativo = operativo, 
+                    `Grado evaluado` = grado, 
+                    `Área evaluada` = area_eval,
+                    `Estrato` = valor_estrat,
+                    `En inicio (%)` = `En inicio`,
+                    `En proceso (%)` = `En proceso`,
+                    `Satisfactorio (%)` = Satisfactorio) %>%
+      datatable(extensions = c('Buttons'),
+                options = list(dom = 'Bfrtip',
+                               buttons = list(
+                                 list(
+                                   extend = 'excel',
+                                   text = 'Descargar tabla en excel'  # Texto personalizado del botón
+                                 )
+                               ),
+                               paging = FALSE,
+                               fixedColumns = TRUE,
+                               fixedHeader = TRUE
+                )
+      )
+
+  } else if (num2 == 4) {
+    
+    t2 %>%
+      dplyr::select(año,grado,area_eval,operativo,valor_estrat,valor_tipo,ptot) %>%
+      mutate(ptot = paste0(puntocoma2(ptot,1),"%") ) %>% 
+      pivot_wider(names_from = valor_tipo,
+                  values_from = ptot) %>%
+      dplyr::select(Año = año, Evaluación = operativo, 
+                    `Grado evaluado` = grado, 
+                    `Área evaluada` = area_eval,
+                    `Estrato` = valor_estrat,
+                    `Previo al inicio (%)` = `Previo al inicio`,
+                    `En inicio (%)` = `En inicio`,
+                    `En proceso (%)` = `En proceso`,
+                    `Satisfactorio (%)` = Satisfactorio) %>%
+      datatable(extensions = c('Buttons'),
+                options = list(dom = 'Bfrtip',
+                               buttons = list(
+                                 list(
+                                   extend = 'excel',
+                                   text = 'Descargar tabla en excel'  # Texto personalizado del botón
+                                 )
+                               ),
+                               paging = FALSE,
+                               fixedColumns = TRUE,
+                               fixedHeader = TRUE
+                )
+      )
+  }
+  
+})
+
+
+```
+
+# Estratos {data-icon="fa-chart-pie"}
+
+```{r Formato de base de datos según estrato por año}
+
+bd_estrat_x <- bd_int %>% 
+  filter(!tip_estrat %in% c("Nacional","DRE")) %>% 
+  select(grado,area_eval, Año,tip_estrat,valor_estrat,valor_tipo,ptot) %>% 
+  mutate(valor_tipo = factor(valor_tipo,
+                             levels = c("Previo al inicio",
+                                        "En inicio",
+                                        "En proceso",
+                                        "Satisfactorio"))) %>% 
+  mutate(valor_estrat = case_when(valor_estrat %in% "Estatal" ~ "Público",
+                                  valor_estrat %in% "No estatal" ~ "Privado",
+                                  TRUE ~ valor_estrat))
+
+```
+
+Column 
+-------------------------------------
+
+## Selección {.sidebar}
+
+```{r Barra lateral estratos}
+
+fluidRow(
+  inputPanel(
+    selectInput('x1_input', 
+                label = 'Selecciona el grado:', 
+                choices = unique(bd_estrat_x$grado)),
+    selectInput('y1_input', 
+                label = 'Selecciona el año:', 
+                choices = NULL),
+    selectInput('z1_input', 
+                label = 'Selecciona el área evaluada:', 
+                choices = NULL),
+    selectInput('w1_input',
+                label = 'Selecciona el estrato:',
+                choices = NULL),
+    downloadButton("download_plot_strat", "Descargar gráfico")
+  )
+)
+
+#Relacionando los años evaluados con el grado correspondiente
+
+observeEvent(input$x1_input, {
+  
+  anhos_1 <- switch(input$x1_input,
+                    "2.° grado de primaria" = unique(bd_estrat_x %>% filter(grado == "2.° grado de primaria") %>% pull(Año) %>% sort(decreasing  = T)),
+                    "4.° grado de primaria" = unique(bd_estrat_x %>% filter(grado == "4.° grado de primaria") %>% pull(Año) %>% sort(decreasing  = T)),
+                    "2.° grado de secundaria" = unique(bd_estrat_x %>% filter(grado == "2.° grado de secundaria") %>% pull(Año) %>% sort(decreasing  = T))
+  )
+  
+  updateSelectInput(session, "y1_input", choices = anhos_1)
+  
+})
+
+#Relacionando el grado evaluado con el estrato seleccionado
+
+observeEvent(input$x1_input, {
+  
+  estratos_1 <- switch(input$x1_input,
+                       "2.° grado de primaria" = unique(bd_estrat_x %>% filter(grado == "2.° grado de primaria") %>% pull(tip_estrat)),
+                       "4.° grado de primaria" = unique(bd_estrat_x %>% filter(grado == "4.° grado de primaria") %>% pull(tip_estrat)),
+                       "2.° grado de secundaria" = unique(bd_estrat_x %>% filter(grado == "2.° grado de secundaria") %>% pull(tip_estrat))
+  )
+  
+  updateSelectInput(session, "w1_input", choices = estratos_1)
+  
+})
+
+#Relacionando el área evaluada con los grados evaluados con el grado correspondiente
+
+observeEvent(c(input$x1_input, input$y1_input), {
+  
+  if (input$x1_input == "2.° grado de secundaria") {
+    areas_1 <- switch(input$y1_input,
+                      "2015" = c("Matemática", "Lectura"),
+                      "2016" = c("Matemática", "Lectura","Ciencias sociales"),
+                      "2018" = c("Matemática", "Lectura", "Ciencias sociales", "Ciencia y tecnología"),
+                      "2019" = c("Matemática", "Lectura", "Ciencia y tecnología"),
+                      "2022" = c("Matemática", "Lectura", "Ciencia y tecnología"),
+                      "2023" = c("Matemática", "Lectura", "Ciencias sociales"),
+                      c())
+  } else  if (input$x1_input == "2.° grado de primaria") {
+    areas_1 <- switch(input$y1_input,
+                      "2007" = c("Matemática", "Lectura"),
+                      "2008" = c("Matemática", "Lectura"),
+                      "2009" = c("Matemática", "Lectura"),
+                      "2010" = c("Matemática", "Lectura"),
+                      "2011" = c("Matemática", "Lectura"),
+                      "2012" = c("Matemática", "Lectura"),
+                      "2013" = c("Matemática", "Lectura"),
+                      "2014" = c("Matemática", "Lectura"),
+                      "2015" = c("Matemática", "Lectura"),
+                      "2016" = c("Matemática", "Lectura"),
+                      "2018" = c("Matemática", "Lectura"),
+                      "2019" = c("Matemática", "Lectura"),
+                      "2022" = c("Matemática", "Lectura"),
+                      "2023" = c("Matemática", "Lectura"),
+                      c())
+  } else  if (input$x1_input == "4.° grado de primaria") {
+    areas_1 <- switch(input$y1_input,
+                      "2016" = c("Matemática", "Lectura"),
+                      "2018" = c("Matemática", "Lectura"),
+                      "2019" = c("Matemática", "Lectura"),
+                      "2022" = c("Matemática", "Lectura"),
+                      "2023" = c("Matemática", "Lectura"),
+                      c())
+  } else {
+    areas_1 <- NULL
+  }
+  
+  updateSelectInput(session, "z1_input", choices = areas_1)
+}
+)
+
+output$download_plot_strat <- downloadHandler(
+  filename = function() {
+    paste("grafico_estrato_", Sys.Date(), ".png", sep = "")
+  },
+  content = function(file) {
+    # Guardar el gráfico como archivo PNG
+    ggsave(file, plot = last_plot(), device = "png", width = 8, height = 6)
+  }
+)
+
+```
+
+Row {data-height=9000}
+-------------------------------------
+
+### **Resultado por estratos** {data-width=600}
+
+```{r Gráfico estratos}
+
+renderPlot({
+  
+  t3 <- bd_estrat_x %>%
+    filter(grado == input$x1_input) %>%
+    filter(Año == input$y1_input) %>%
+    filter(area_eval == input$z1_input) %>% 
+    filter(tip_estrat == input$w1_input)
+  
+  num_estrat <- length(unique(t3$valor_tipo))
+  
+  pos <- t3 %>%
+    pivot_wider(names_from = valor_tipo, values_from = ptot)
+  
+  if (num_estrat == 4) {
+    
+    colnames(pos)[6:9] <- c("n_in", "n_pr", "n_pi", "n_sa")
+    
+    pos1 <- pos %>%
+      mutate(pos_sa = case_when(n_sa >= 15 ~ n_sa/2,
+                                TRUE ~ n_sa + 10),
+             pos_pr = n_pr/2,
+             pos_in = n_pr + n_in/2,
+             pos_pi = case_when(n_pi >= 15 ~ n_pr + n_in + n_pi/2,
+                                TRUE ~ n_pr + n_in + n_pi + 10)) %>%
+      mutate(pos_pr = pos_pr*-1,
+             pos_in = pos_in*-1,
+             pos_pi = pos_pi*-1)
+    
+    pos2 <- pos1 %>%
+      pivot_longer(cols = starts_with("pos_"),
+                   names_to = "niv_log",
+                   values_to = "posit") %>%
+      mutate(valor_tipo = case_when(niv_log == "pos_sa" ~ "Satisfactorio",
+                                    niv_log == "pos_pr" ~ "En proceso",
+                                    niv_log == "pos_in" ~ "En inicio",
+                                    TRUE ~ "Previo al inicio")) %>% 
+      select(grado,area_eval,valor_estrat,valor_tipo,posit)
+    
+    niveles <- t3 %>%
+      left_join(pos2, by = c("grado","area_eval", "valor_estrat","valor_tipo")) %>%
+      mutate(m_etiq = puntocoma2(ptot,1),
+             ptot = case_when(valor_tipo != "Satisfactorio" ~ ptot*-1,
+                              TRUE ~ ptot)) %>%
+      mutate(valor_tipo = factor(valor_tipo,
+                                 levels = c("Previo al inicio",
+                                            "En inicio",
+                                            "En proceso",
+                                            "Satisfactorio")))
+    
+    ggplot(niveles, aes(x = valor_estrat, 
+                        y = ptot)) +
+      geom_col(width = 0.25, 
+               aes(fill = valor_tipo)) +
+      scale_fill_manual(values = c(color_pre_in,color_inicio, color_proces, color_satisf))  +
+      scale_y_continuous(limits = c(-110, 110), n.breaks = 9) +
+      theme_bw() +
+      theme(panel.border = element_blank(),
+            panel.grid = element_blank(),
+            legend.position = "bottom",
+            legend.title = element_blank(),
+            legend.text = element_text(size = 16),
+            axis.text.y = element_blank(),
+            axis.text.x = element_text(size = 18, 
+                                       color = "black"),
+            axis.ticks = element_blank(),
+            axis.title = element_blank(),
+            plot.title = element_text(hjust = 0.5, 
+                                      size = 20),
+            plot.subtitle = element_text(hjust = 0.5, 
+                                      size = 18)) +
+      geom_segment(aes(x=0.8, xend=2.2, y=0, yend=0), color="#737373", linewidth = 0.5) +
+      geom_text(data = niveles, aes(label = m_etiq, y = posit), size = 6.5, color = "black") +
+      labs(title = input$x1_input,
+           subtitle = input$z1_input
+      )
+    
+  } else if (num_estrat == 3) {
+    
+    colnames(pos)[6:8] <- c("n_in", "n_pr", "n_sa")
+    
+    pos1 <- pos %>%
+      mutate(pos_sa = case_when(n_sa >= 15 ~ n_sa/2,
+                                TRUE ~ n_sa + 10),
+             pos_pr = n_pr/2,
+             pos_in = case_when(n_in >= 15 ~ n_pr + n_in/2,
+                                TRUE ~ n_pr + n_in + 10)) %>%
+      mutate(pos_pr = pos_pr * -1,
+             pos_in = pos_in * -1)
+    
+    pos2 <- pos1 %>%
+      pivot_longer(cols = starts_with("pos_"),
+                   names_to = "niv_log",
+                   values_to = "posit") %>%
+      mutate(valor_tipo = case_when(
+        niv_log == "pos_sa" ~ "Satisfactorio",
+        niv_log == "pos_pr" ~ "En proceso",
+        TRUE ~ "En inicio")) %>% 
+      select(grado,area_eval,valor_estrat,valor_tipo,posit)
+    
+    niveles <- t3 %>%
+      left_join(pos2, by = c("grado","area_eval", "valor_estrat","valor_tipo")) %>%
+      mutate(m_etiq = puntocoma2(ptot,1),
+             ptot = case_when(valor_tipo != "Satisfactorio" ~ ptot*-1,
+                              TRUE ~ ptot)) %>%
+      mutate(valor_tipo = factor(valor_tipo,
+                                 levels = c("En inicio",
+                                            "En proceso",
+                                            "Satisfactorio")))
+    
+    ggplot(niveles, aes(x = valor_estrat,
+                              y = ptot)) +
+      geom_col(width = 0.25, 
+               aes(fill = valor_tipo)) +
+      scale_fill_manual(values = c(color_inicio, color_proces, color_satisf))  +
+      scale_y_continuous(limits = c(-110, 110), n.breaks = 9) +
+      theme_bw() +
+      theme(panel.border = element_blank(),
+            panel.grid = element_blank(),
+            legend.position = "bottom",
+            legend.title = element_blank(),
+            legend.text = element_text(size = 16),
+            axis.text.y = element_blank(),
+            axis.text.x = element_text(size = 18, color = "black"),
+            axis.ticks = element_blank(),
+            axis.title = element_blank(),
+            plot.title = element_text(hjust = 0.5, 
+                                      size = 20),
+            plot.subtitle = element_text(hjust = 0.5, 
+                                      size = 18)) +
+      geom_segment(aes(x=0.8, xend=2.2, y=0, yend=0), color="#737373", linewidth = 0.5) +
+      geom_text(data = niveles, aes(label = m_etiq, y = posit), size = 6.5, color = "black") +
+      labs(subtitle = input$x1_input,
+           title = input$z1_input 
+      )
+  }
+
+  }
+  # width = 480, height =380
+)
+
+
+```
+
+### **Indicaciones generales** 
+
+<div style="font-size: 13px; font-family: 'Arial', sans-serif;">
+
+**<u>Definiciones de niveles de logro</u>**
+
+$\color{#9BBB59}{\text{Satisfactorio}}$: El estudiante logró los aprendizajes esperados para su ciclo y está preparado para afrontar los retos de aprendizaje del ciclo siguiente.
+
+$\color{#F79646}{\text{En proceso}}$: El estudiante logró parcialmente los aprendizajes esperados para su ciclo. Se encuentra en camino de lograrlos, pero todavía tiene dificultades.
+
+$\color{#A74D4B}{\text{En inicio}}$: El estudiante logró aprendizajes muy elementales respecto de lo que se espera para su ciclo.
+
+$\color{#A5A5A5}{\text{Previo al inicio}}$: El estudiante no logró los aprendizajes necesarios para estar en el nivel En inicio.
+
+</div>
+
+**<u>Descarga de los datos</u>**
+
+- Para descargar los resultados de la tabla de abajo, hacer click en el botón que dice **"Descargar tabla en excel"**.
+- Para descargar el gráfico de resultados, hacer click en el botón del lado izquierdo que dice **"Descargar gráfico"**.
+
+**<u>Observaciones</u>**
+
+- Las regiones de Ayacucho, Cajamarca, Huancavelica y Puno no presentan resultados en algunos años debido a que no alcanzaron la cobertura de estudiantes requerida para obtener resultados confiables (80,0%). Específicamente, Ayacucho y Cajamarca no tienen datos disponibles para los años 2008, 2009, 2010 y 2011; Huancavelica no cuenta con resultados para 2008 y 2009; mientras que Puno carece de datos para 2008 y 2010.
+
+Row 
+-------------------------------------
+
+## **Resultados por region y estratos** {data-height=9000} 
+
+```{r Tabla resultados por estrato en regiones}
+
+renderDT({
+
+  pre_t4 <- bd_int %>% 
+    filter(grado == input$x1_input) %>%
+    filter(Año == input$y1_input) %>%
+    filter(area_eval == input$z1_input) %>%
+    filter(tip_estrat == input$w1_input) %>% 
+    rename(tip_subestrat = tip_estrat) %>% 
+    mutate(nom_DRE = "Nacional",
+           tip_estrat = "Nacional") %>% 
+    select(Año,nom_DRE, valor_estrat,valor_tipo,tot,ptot,tipo, tip_estrat, grado, area_eval,tip_subestrat) 
+  
+  t4 <- bd_dre_estrat %>%
+    filter(grado == input$x1_input) %>%
+    filter(Año == input$y1_input) %>%
+    filter(area_eval == input$z1_input) %>%
+    filter(tip_subestrat == input$w1_input) %>% 
+    filter(tip_estrat %in% c("DRE", "Nacional")) %>%
+    rbind(pre_t4) %>% 
+    rename(año = Año) %>%
+    left_join(opera_nac, by = c("grado", "año")) %>%
+    filter(
+      case_when(operativo == "Muestral nacional" ~ tip_estrat != "DRE",
+                TRUE ~ TRUE )
+    ) %>% 
+    mutate(nom_DRE = factor(nom_DRE,
+                            levels = c("Nacional",
+                                       setdiff(unique(nom_DRE), "Nacional")))) %>% 
+    arrange(nom_DRE)
+    
+  validate(
+    need(nrow(t4) > 0, "Para el grado y año seleccionado no se consideró representatividad a nivel de DRE.")
+  )
+
+  num3 <- length(unique(t4$valor_tipo))
+
+  if (num3 == 3) {
+    
+    t4 %>%
+      select(año,grado,area_eval,operativo,nom_DRE,
+             tip_subestrat,valor_estrat,valor_tipo,ptot) %>%
+      mutate(ptot = paste0(puntocoma2(ptot,1),"%") ) %>% 
+      pivot_wider(names_from = valor_tipo,
+                  values_from = ptot) %>%
+      select(Año = año, Operativo = operativo, 
+                    `Grado evaluado` = grado, 
+                    `Área evaluada` = area_eval,
+                    `DRE` = nom_DRE,
+                    `Estrato` = tip_subestrat,
+                    `Sub-estrato` = valor_estrat,
+                    `En inicio (%)` = `En inicio`,
+                    `En proceso (%)` = `En proceso`,
+                    `Satisfactorio (%)` = Satisfactorio) %>%
+      datatable(extensions = c('Buttons'),
+                options = list(dom = 'Bfrtip',
+                               buttons = list(
+                                 list(
+                                   extend = 'excel',
+                                   text = 'Descargar tabla en excel'  # Texto personalizado del botón
+                                 )
+                               ),
+                               paging = FALSE,
+                               fixedColumns = TRUE,
+                               fixedHeader = TRUE
+                )
+      )
+
+  } else if (num3 == 4) {
+    
+    t4 %>%
+      select(año,grado,area_eval,operativo,nom_DRE,
+             tip_subestrat,valor_estrat,valor_tipo,ptot) %>%
+      mutate(ptot = paste0(puntocoma2(ptot,1),"%") ) %>% 
+      pivot_wider(names_from = valor_tipo,
+                  values_from = ptot) %>%
+      select(Año = año, Operativo = operativo, 
+                    `Grado evaluado` = grado, 
+                    `Área evaluada` = area_eval,
+                    `DRE` = nom_DRE,
+                    `Estrato` = tip_subestrat,
+                    `Sub-estrato` = valor_estrat,
+                    `Previo al inicio (%)` = `Previo al inicio`,
+                    `En inicio (%)` = `En inicio`,
+                    `En proceso (%)` = `En proceso`,
+                    `Satisfactorio (%)` = Satisfactorio) %>%
+      datatable(extensions = c('Buttons'),
+                options = list(dom = 'Bfrtip',
+                               buttons = list(
+                                 list(
+                                   extend = 'excel',
+                                   text = 'Descargar tabla en excel'  # Texto personalizado del botón
+                                 )
+                               ),
+                               paging = FALSE,
+                               fixedColumns = TRUE,
+                               fixedHeader = TRUE
+                )
+      )
+  }
+  
+})
+
+
+```
+
+
+# Nacional en el tiempo {data-icon="fa-line-chart"}
+
+Column 
+-------------------------------------
+
+## Selección {.sidebar}
+
+```{r Barra lateral en el tiempo nacional}
+
+fluidRow(
+  inputPanel(
+    selectInput('gra_input', 
+                label = 'Selecciona grado evaluado:', 
+                choices = unique(bd_nac_x$grado)),
+    selectInput('are_input', 
+                label = 'Selecciona el área evaluada:', 
+                choices = NULL),
+    selectInput('est_input',
+                label = "Selecciona el estrato",
+                choices = NULL)
+)
+)
+
+#Relacionando el área evaluada con el grado seleccionado
+
+observeEvent(input$gra_input, {
+  
+  areas_eval_nac <- switch(input$gra_input,
+                       "2.° grado de primaria" = unique(bd_estrat_x %>% filter(grado == "2.° grado de primaria") %>% pull(area_eval)),
+                       "4.° grado de primaria" = unique(bd_estrat_x %>% filter(grado == "4.° grado de primaria") %>% pull(area_eval)),
+                       "2.° grado de secundaria" = unique(bd_estrat_x %>% filter(grado == "2.° grado de secundaria") %>% pull(area_eval))
+  )
+  
+  updateSelectInput(session, "are_input", choices = areas_eval_nac)
+  
+})
+
+#Relacionando el grado evaluado con el estrato seleccionado
+
+observeEvent(input$gra_input, {
+  
+  estratos_nac <- switch(input$gra_input,
+                       "2.° grado de primaria" = unique(bd_estrat_x %>% filter(grado == "2.° grado de primaria") %>% pull(tip_estrat)),
+                       "4.° grado de primaria" = unique(bd_estrat_x %>% filter(grado == "4.° grado de primaria") %>% pull(tip_estrat)),
+                       "2.° grado de secundaria" = unique(bd_estrat_x %>% filter(grado == "2.° grado de secundaria") %>% pull(tip_estrat))
+  )
+  
+  updateSelectInput(session, "est_input", choices = estratos_nac)
+  
+})
+
+```
+
+Row {data-height=9000}
+-------------------------------------
+
+### **Resultado nacional en el tiempo** {data-width=1500}
+
+```{r Gráfico resultado nacional en el tiempo}
+
+renderPlot({
+  
+  t6_nac <- bd_nac_x %>%
+    filter(grado %in% input$gra_input) %>%
+    filter(area_eval %in% input$are_input)
+  
+  num_nac_tiemp <- length(unique(t6_nac$valor_tipo))
+  num_años <- length(unique(t6_nac$Año))
+  
+  pos0 <- t6_nac %>%
+    pivot_wider(names_from = valor_tipo,
+                values_from = ptot) 
+  
+  if (num_nac_tiemp == 4) {
+    
+    pos <- pos0 %>% 
+      rename(n_pi = `Previo al inicio`,
+             n_in = `En inicio`,
+             n_pr = `En proceso`,
+             n_sa = Satisfactorio)
+    
+    pos1 <- pos %>%
+      mutate(pos_sa = case_when(n_sa >= 15 ~ n_sa/2,
+                                TRUE ~ n_sa + 10),
+             pos_pr = n_pr/2,
+             pos_in = n_pr + n_in/2,
+             pos_pi = case_when(n_pi >= 15 ~ n_pr + n_in + n_pi/2,
+                                TRUE ~ n_pr + n_in + n_pi + 10)) %>%
+      mutate(pos_pr = pos_pr*-1,
+             pos_in = pos_in*-1,
+             pos_pi = pos_pi*-1)
+    
+    pos2 <- pos1 %>%
+      pivot_longer(cols = starts_with("pos_"),
+                   names_to = "niv_log",
+                   values_to = "posit") %>%
+      mutate(valor_tipo = case_when(niv_log == "pos_sa" ~ "Satisfactorio",
+                                    niv_log == "pos_pr" ~ "En proceso",
+                                    niv_log == "pos_in" ~ "En inicio",
+                                    TRUE ~ "Previo al inicio")) %>% 
+      select(grado,area_eval,Año,valor_tipo,posit)
+    
+    niveles <- t6_nac %>%
+      left_join(pos2, by = c("grado","area_eval","Año","valor_tipo")) %>%
+      mutate(m_etiq = puntocoma2(ptot,1),
+             ptot = case_when(valor_tipo != "Satisfactorio" ~ ptot*-1,
+                              TRUE ~ ptot)) %>%
+      mutate(valor_tipo = factor(valor_tipo,
+                                 levels = c("Previo al inicio",
+                                            "En inicio",
+                                            "En proceso",
+                                            "Satisfactorio")))
+    
+    ggplot(niveles, aes(x = Año,
+                        y = ptot))  +
+      geom_col(width = 0.50,
+               aes(fill = valor_tipo)) +
+      scale_fill_manual(values = c(color_pre_in,color_inicio, color_proces, color_satisf))  +
+      scale_y_continuous(limits = c(-110, 90), n.breaks = 9) +
+      theme_bw() +
+      theme(panel.border = element_blank(),
+            panel.grid = element_blank(),
+            legend.position = "bottom",
+            legend.title = element_blank(),
+            legend.text = element_text(size = 16),
+            axis.text.y = element_blank(),
+            axis.text.x = element_text(size = 18, color = "black"),
+            axis.ticks = element_blank(),
+            axis.title = element_blank(),
+            plot.title = element_text(hjust = 0.5, size = 20),
+            plot.subtitle = element_text(hjust = 0.5, size = 18),
+            plot.caption = element_text(hjust = 0.15, size = 12)) +
+      geom_segment(aes(x=0.6,
+                       xend=(num_años + 0.4),
+                       y=0,
+                       yend=0),
+                   color="#737373",
+                   linewidth = 0.5) +
+      geom_text(data = niveles,
+                aes(label = m_etiq,
+                    y = posit),
+                size = 5.0,
+                color = "black") +
+      labs(title = input$gra_input,
+           subtitle = input$are_input
+           )
+    
+  } else if (num_nac_tiemp == 3) {
+    
+    pos <- pos0 %>% 
+      rename(n_in = `En inicio`,
+             n_pr = `En proceso`,
+             n_sa = Satisfactorio)
+    
+    pos1 <- pos %>%
+      mutate(pos_sa = case_when(n_sa >= 15 ~ n_sa/2,
+                                TRUE ~ n_sa + 10),
+             pos_pr = n_pr/2,
+             pos_in = case_when(n_in >= 15 ~ n_pr + n_in/2,
+                                TRUE ~ n_pr + n_in + 10)) %>%
+      mutate(pos_pr = pos_pr * -1,
+             pos_in = pos_in * -1)
+    
+    pos2 <- pos1 %>%
+      pivot_longer(cols = starts_with("pos_"),
+                   names_to = "niv_log",
+                   values_to = "posit") %>%
+      mutate(valor_tipo = case_when(
+        niv_log == "pos_sa" ~ "Satisfactorio",
+        niv_log == "pos_pr" ~ "En proceso",
+        TRUE ~ "En inicio")) %>% 
+      select(grado,area_eval,Año,valor_tipo,posit)
+    
+    niveles <- t6_nac %>%
+      left_join(pos2, by = c("grado","area_eval","Año","valor_tipo")) %>%
+      mutate(m_etiq = puntocoma2(ptot,1),
+             ptot = case_when(valor_tipo != "Satisfactorio" ~ ptot*-1,
+                              TRUE ~ ptot)) %>%
+      mutate(valor_tipo = factor(valor_tipo,
+                                 levels = c("En inicio",
+                                            "En proceso",
+                                            "Satisfactorio")))
+    
+    ggplot(niveles, aes(x = Año,
+                        y = ptot))  +
+      geom_col(width = 0.50,
+               aes(fill = valor_tipo)) +
+      scale_fill_manual(values = c(color_inicio, color_proces, color_satisf))  +
+      scale_y_continuous(limits = c(-110, 90), n.breaks = 9) +
+      theme_bw() +
+      theme(panel.border = element_blank(),
+            panel.grid = element_blank(),
+            legend.position = "bottom",
+            legend.title = element_blank(),
+            legend.text = element_text(size = 16),
+            axis.text.y = element_blank(),
+            axis.text.x = element_text(size = 18, color = "black"),
+            axis.ticks = element_blank(),
+            axis.title = element_blank(),
+            plot.title = element_text(hjust = 0.5, size = 20),
+            plot.subtitle = element_text(hjust = 0.5, size = 18),
+            plot.caption = element_text(hjust = 0.15, size = 12)) +
+      geom_segment(aes(x=0.6,
+                       xend=(num_años + 0.4),
+                       y=0,
+                       yend=0),
+                   color="#737373",
+                   linewidth = 0.5) +
+      geom_text(data = niveles,
+                aes(label = m_etiq,
+                    y = posit),
+                size = 5.0,
+                color = "black") +
+      labs(title = input$gra_input,
+           subtitle = input$are_input
+           )
+  }
+  
+}
+)
+
+```
+
+Row {data-height=10000}
+-------------------------------------
+
+### **Resultados nacionales por estrato 1**
+
+```{r Gráfico estrato nacional 1}
+
+renderPlot({
+  
+  temp1_nac <- bd_estrat_x %>% 
+    filter(tip_estrat %in% input$est_input) %>% 
+    filter(grado %in% input$gra_input) %>% 
+    filter(area_eval %in% input$are_input)
+  
+  nom_estrat <- unique(temp1_nac$valor_estrat)
+  
+  t7 <- temp1_nac %>% 
+    filter(valor_estrat %in% nom_estrat[[1]]) %>% 
+    select(Año,valor_estrat,grado,area_eval,valor_tipo,ptot)
+  
+  num8 <- length(unique(t7$valor_tipo))
+  num_años <- length(unique(t7$Año))
+  
+  pos0 <- t7 %>%
+    pivot_wider(names_from = valor_tipo,
+                values_from = ptot) 
+  
+  if (num8 == 4) {
+    
+    pos <- pos0 %>% 
+      rename(n_pi = `Previo al inicio`,
+             n_in = `En inicio`,
+             n_pr = `En proceso`,
+             n_sa = Satisfactorio)
+    
+    pos1 <- pos %>%
+      mutate(pos_sa = case_when(n_sa >= 15 ~ n_sa/2,
+                                TRUE ~ n_sa + 10),
+             pos_pr = n_pr/2,
+             pos_in = n_pr + n_in/2,
+             pos_pi = case_when(n_pi >= 15 ~ n_pr + n_in + n_pi/2,
+                                TRUE ~ n_pr + n_in + n_pi + 10)) %>%
+      mutate(pos_pr = pos_pr*-1,
+             pos_in = pos_in*-1,
+             pos_pi = pos_pi*-1)
+    
+    pos2 <- pos1 %>%
+      pivot_longer(cols = starts_with("pos_"),
+                   names_to = "niv_log",
+                   values_to = "posit") %>%
+      mutate(valor_tipo = case_when(niv_log == "pos_sa" ~ "Satisfactorio",
+                                    niv_log == "pos_pr" ~ "En proceso",
+                                    niv_log == "pos_in" ~ "En inicio",
+                                    TRUE ~ "Previo al inicio")) %>% 
+      select(grado,area_eval,Año,valor_estrat,valor_tipo,posit)
+    
+    niveles <- t7 %>%
+      left_join(pos2, by = c("grado","area_eval","Año","valor_tipo")) %>%
+      mutate(m_etiq = puntocoma2(ptot,1),
+             ptot = case_when(valor_tipo != "Satisfactorio" ~ ptot*-1,
+                              TRUE ~ ptot)) %>%
+      mutate(valor_tipo = factor(valor_tipo,
+                                 levels = c("Previo al inicio",
+                                            "En inicio",
+                                            "En proceso",
+                                            "Satisfactorio")))
+    
+    ggplot(niveles, aes(x = Año,
+                        y = ptot))  +
+      geom_col(width = 0.50,
+               aes(fill = valor_tipo)) +
+      scale_fill_manual(values = c(color_pre_in,color_inicio, color_proces, color_satisf))  +
+      scale_y_continuous(limits = c(-110, 90), n.breaks = 9) +
+      theme_bw() +
+      theme(panel.border = element_blank(),
+            panel.grid = element_blank(),
+            legend.position = "bottom",
+            legend.title = element_blank(),
+            legend.text = element_text(size = 16),
+            axis.text.y = element_blank(),
+            axis.text.x = element_text(size = 18, color = "black"),
+            axis.ticks = element_blank(),
+            axis.title = element_blank(),
+            plot.title = element_text(hjust = 0.5, size = 20),
+            plot.subtitle = element_text(hjust = 0.5, size = 18),
+            plot.caption = element_text(hjust = 0.15, size = 12)) +
+      geom_segment(aes(x=0.6,
+                       xend=(num_años + 0.4),
+                       y=0,
+                       yend=0),
+                   color="#737373",
+                   linewidth = 0.5) +
+      geom_text(data = niveles,
+                aes(label = m_etiq,
+                    y = posit),
+                size = 5.0,
+                color = "black") +
+      labs(title = input$gra_input,
+           subtitle = paste0(input$are_input," - ",nom_estrat[[1]])
+      )
+    
+  } else if (num8 == 3) {
+    
+    pos <- pos0 %>% 
+      rename(n_in = `En inicio`,
+             n_pr = `En proceso`,
+             n_sa = Satisfactorio)
+    
+    pos1 <- pos %>%
+      mutate(pos_sa = case_when(n_sa >= 15 ~ n_sa/2,
+                                TRUE ~ n_sa + 10),
+             pos_pr = n_pr/2,
+             pos_in = case_when(n_in >= 15 ~ n_pr + n_in/2,
+                                TRUE ~ n_pr + n_in + 10)) %>%
+      mutate(pos_pr = pos_pr * -1,
+             pos_in = pos_in * -1)
+    
+    pos2 <- pos1 %>%
+      pivot_longer(cols = starts_with("pos_"),
+                   names_to = "niv_log",
+                   values_to = "posit") %>%
+      mutate(valor_tipo = case_when(
+        niv_log == "pos_sa" ~ "Satisfactorio",
+        niv_log == "pos_pr" ~ "En proceso",
+        TRUE ~ "En inicio")) %>% 
+      select(grado,area_eval,Año,valor_estrat,valor_tipo,posit)
+    
+    niveles <- t7 %>%
+      left_join(pos2, by = c("grado","area_eval","Año","valor_tipo")) %>%
+      mutate(m_etiq = puntocoma2(ptot,1),
+             ptot = case_when(valor_tipo != "Satisfactorio" ~ ptot*-1,
+                              TRUE ~ ptot)) %>%
+      mutate(valor_tipo = factor(valor_tipo,
+                                 levels = c("En inicio",
+                                            "En proceso",
+                                            "Satisfactorio")))
+    
+    ggplot(niveles, aes(x = Año,
+                        y = ptot))  +
+      geom_col(width = 0.50,
+               aes(fill = valor_tipo)) +
+      scale_fill_manual(values = c(color_inicio, color_proces, color_satisf))  +
+      scale_y_continuous(limits = c(-110, 90), n.breaks = 9) +
+      theme_bw() +
+      theme(panel.border = element_blank(),
+            panel.grid = element_blank(),
+            legend.position = "bottom",
+            legend.title = element_blank(),
+            legend.text = element_text(size = 16),
+            axis.text.y = element_blank(),
+            axis.text.x = element_text(size = 18, color = "black"),
+            axis.ticks = element_blank(),
+            axis.title = element_blank(),
+            plot.title = element_text(hjust = 0.5, size = 20),
+            plot.subtitle = element_text(hjust = 0.5, size = 18),
+            plot.caption = element_text(hjust = 0.15, size = 12)) +
+      geom_segment(aes(x=0.6,
+                       xend=(num_años + 0.4),
+                       y=0,
+                       yend=0),
+                   color="#737373",
+                   linewidth = 0.5) +
+      geom_text(data = niveles,
+                aes(label = m_etiq,
+                    y = posit),
+                size = 5.0,
+                color = "black") +
+      labs(title = input$gra_input,
+           subtitle = paste0(input$are_input," - ",nom_estrat[[1]])
+      )
+  }
+  
+}
+)
+
+```
+
+### **Resultados nacionales por estrato 2**
+
+```{r Gráfico estrato nacional 2}
+
+renderPlot({
+  
+  temp1_nac <- bd_estrat_x %>% 
+    filter(tip_estrat %in% input$est_input) %>% 
+    filter(grado %in% input$gra_input) %>% 
+    filter(area_eval %in% input$are_input)
+  
+  nom_estrat <- unique(temp1_nac$valor_estrat)
+  
+  t7 <- temp1_nac %>% 
+    filter(valor_estrat %in% nom_estrat[[2]]) %>% 
+    select(Año,valor_estrat,grado,area_eval,valor_tipo,ptot)
+  
+  num8 <- length(unique(t7$valor_tipo))
+  num_años <- length(unique(t7$Año))
+  
+  pos0 <- t7 %>%
+    pivot_wider(names_from = valor_tipo,
+                values_from = ptot) 
+  
+  if (num8 == 4) {
+    
+    pos <- pos0 %>% 
+      rename(n_pi = `Previo al inicio`,
+             n_in = `En inicio`,
+             n_pr = `En proceso`,
+             n_sa = Satisfactorio)
+    
+    pos1 <- pos %>%
+      mutate(pos_sa = case_when(n_sa >= 15 ~ n_sa/2,
+                                TRUE ~ n_sa + 10),
+             pos_pr = n_pr/2,
+             pos_in = n_pr + n_in/2,
+             pos_pi = case_when(n_pi >= 15 ~ n_pr + n_in + n_pi/2,
+                                TRUE ~ n_pr + n_in + n_pi + 10)) %>%
+      mutate(pos_pr = pos_pr*-1,
+             pos_in = pos_in*-1,
+             pos_pi = pos_pi*-1)
+    
+    pos2 <- pos1 %>%
+      pivot_longer(cols = starts_with("pos_"),
+                   names_to = "niv_log",
+                   values_to = "posit") %>%
+      mutate(valor_tipo = case_when(niv_log == "pos_sa" ~ "Satisfactorio",
+                                    niv_log == "pos_pr" ~ "En proceso",
+                                    niv_log == "pos_in" ~ "En inicio",
+                                    TRUE ~ "Previo al inicio")) %>% 
+      select(grado,area_eval,Año,valor_estrat,valor_tipo,posit)
+    
+    niveles <- t7 %>%
+      left_join(pos2, by = c("grado","area_eval","Año","valor_tipo")) %>%
+      mutate(m_etiq = puntocoma2(ptot,1),
+             ptot = case_when(valor_tipo != "Satisfactorio" ~ ptot*-1,
+                              TRUE ~ ptot)) %>%
+      mutate(valor_tipo = factor(valor_tipo,
+                                 levels = c("Previo al inicio",
+                                            "En inicio",
+                                            "En proceso",
+                                            "Satisfactorio")))
+    
+    ggplot(niveles, aes(x = Año,
+                        y = ptot))  +
+      geom_col(width = 0.50,
+               aes(fill = valor_tipo)) +
+      scale_fill_manual(values = c(color_pre_in,color_inicio, color_proces, color_satisf))  +
+      scale_y_continuous(limits = c(-110, 90), n.breaks = 9) +
+      theme_bw() +
+      theme(panel.border = element_blank(),
+            panel.grid = element_blank(),
+            legend.position = "bottom",
+            legend.title = element_blank(),
+            legend.text = element_text(size = 16),
+            axis.text.y = element_blank(),
+            axis.text.x = element_text(size = 18, color = "black"),
+            axis.ticks = element_blank(),
+            axis.title = element_blank(),
+            plot.title = element_text(hjust = 0.5, size = 20),
+            plot.subtitle = element_text(hjust = 0.5, size = 18),
+            plot.caption = element_text(hjust = 0.15, size = 12)) +
+      geom_segment(aes(x=0.6,
+                       xend=(num_años + 0.4),
+                       y=0,
+                       yend=0),
+                   color="#737373",
+                   linewidth = 0.5) +
+      geom_text(data = niveles,
+                aes(label = m_etiq,
+                    y = posit),
+                size = 5.0,
+                color = "black") +
+      labs(title = input$gra_input,
+           subtitle = paste0(input$are_input," - ",nom_estrat[[2]])
+      )
+    
+  } else if (num8 == 3) {
+    
+    pos <- pos0 %>% 
+      rename(n_in = `En inicio`,
+             n_pr = `En proceso`,
+             n_sa = Satisfactorio)
+    
+    pos1 <- pos %>%
+      mutate(pos_sa = case_when(n_sa >= 15 ~ n_sa/2,
+                                TRUE ~ n_sa + 10),
+             pos_pr = n_pr/2,
+             pos_in = case_when(n_in >= 15 ~ n_pr + n_in/2,
+                                TRUE ~ n_pr + n_in + 10)) %>%
+      mutate(pos_pr = pos_pr * -1,
+             pos_in = pos_in * -1)
+    
+    pos2 <- pos1 %>%
+      pivot_longer(cols = starts_with("pos_"),
+                   names_to = "niv_log",
+                   values_to = "posit") %>%
+      mutate(valor_tipo = case_when(
+        niv_log == "pos_sa" ~ "Satisfactorio",
+        niv_log == "pos_pr" ~ "En proceso",
+        TRUE ~ "En inicio")) %>% 
+      select(grado,area_eval,Año,valor_estrat,valor_tipo,posit)
+    
+    niveles <- t7 %>%
+      left_join(pos2, by = c("grado","area_eval","Año","valor_tipo")) %>%
+      mutate(m_etiq = puntocoma2(ptot,1),
+             ptot = case_when(valor_tipo != "Satisfactorio" ~ ptot*-1,
+                              TRUE ~ ptot)) %>%
+      mutate(valor_tipo = factor(valor_tipo,
+                                 levels = c("En inicio",
+                                            "En proceso",
+                                            "Satisfactorio")))
+    
+    ggplot(niveles, aes(x = Año,
+                        y = ptot))  +
+      geom_col(width = 0.50,
+               aes(fill = valor_tipo)) +
+      scale_fill_manual(values = c(color_inicio, color_proces, color_satisf))  +
+      scale_y_continuous(limits = c(-110, 90), n.breaks = 9) +
+      theme_bw() +
+      theme(panel.border = element_blank(),
+            panel.grid = element_blank(),
+            legend.position = "bottom",
+            legend.title = element_blank(),
+            legend.text = element_text(size = 16),
+            axis.text.y = element_blank(),
+            axis.text.x = element_text(size = 18, color = "black"),
+            axis.ticks = element_blank(),
+            axis.title = element_blank(),
+            plot.title = element_text(hjust = 0.5, size = 20),
+            plot.subtitle = element_text(hjust = 0.5, size = 18),
+            plot.caption = element_text(hjust = 0.15, size = 12)) +
+      geom_segment(aes(x=0.6,
+                       xend=(num_años + 0.4),
+                       y=0,
+                       yend=0),
+                   color="#737373",
+                   linewidth = 0.5) +
+      geom_text(data = niveles,
+                aes(label = m_etiq,
+                    y = posit),
+                size = 5.0,
+                color = "black") +
+      labs(title = input$gra_input,
+           subtitle = paste0(input$are_input," - ",nom_estrat[[2]])
+      )
+  }
+  
+}
+)
+
+```
+
+#  DRE/UGEL {data-icon="fa-map-marker"}
+
+```{r Formato de base de datos según región por año}
+
+# Base de datos #
+#---------------#
+
+bd_region_x <- bd_int %>% 
+  filter(tip_estrat %in% c("DRE")) %>% 
+  select(grado,area_eval, Año,tip_estrat,valor_estrat,valor_tipo,ptot) %>% 
+  mutate(valor_tipo = factor(valor_tipo,
+                             levels = c("Previo al inicio",
+                                        "En inicio",
+                                        "En proceso",
+                                        "Satisfactorio"))) %>% 
+  left_join(opera_nac %>%  rename(Año = año), by = c("grado", "Año")) %>% 
+  filter(operativo %in% c("Censal","Muestral nacional y regional"))
+
+# Mapa editado #
+#--------------#
+
+map_dep_lm <- mapa_peru2 %>% 
+  mutate(DEPARTAMEN = case_when(DEPARTAMEN %in% "AMAZONAS" ~ "Amazonas",
+                                DEPARTAMEN %in% "APURIMAC" ~ "Apurímac",
+                                DEPARTAMEN %in% "AREQUIPA" ~ "Arequipa",
+                                DEPARTAMEN %in% "AYACUCHO" ~ "Ayacucho",
+                                DEPARTAMEN %in% "CALLAO" ~ "Callao",
+                                DEPARTAMEN %in% "CUSCO" ~ "Cusco",
+                                DEPARTAMEN %in% "CAJAMARCA" ~ "Cajamarca",
+                                DEPARTAMEN %in% "HUANCAVELICA" ~ "Huancavelica",
+                                DEPARTAMEN %in% "HUANUCO" ~ "Huánuco",
+                                DEPARTAMEN %in% "ICA" ~ "Ica",
+                                DEPARTAMEN %in% "JUNIN" ~ "Junín",
+                                DEPARTAMEN %in% "LA LIBERTAD" ~ "La Libertad",
+                                DEPARTAMEN %in% "LAMBAYEQUE" ~ "Lambayeque",
+                                DEPARTAMEN %in% "LIMA" ~ "Lima Provincias",
+                                DEPARTAMEN %in% "LORETO" ~ "Loreto",
+                                DEPARTAMEN %in% "MADRE DE DIOS" ~ "Madre de Dios",
+                                DEPARTAMEN %in% "MOQUEGUA" ~ "Moquegua",
+                                DEPARTAMEN %in% "PASCO" ~ "Pasco",
+                                DEPARTAMEN %in% "PIURA" ~ "Piura",
+                                DEPARTAMEN %in% "PUNO" ~ "Puno",
+                                DEPARTAMEN %in% "SAN MARTIN" ~ "San Martín",
+                                DEPARTAMEN %in% "TACNA" ~ "Tacna",
+                                DEPARTAMEN %in% "TUMBES" ~ "Tumbes",
+                                DEPARTAMEN %in% "UCAYALI" ~ "Ucayali",
+                                DEPARTAMEN %in% "ANCASH" ~ "Áncash",
+                                TRUE ~ DEPARTAMEN)) %>% 
+  mutate(DEPARTAMEN = case_when(IDPROV %in% "1501" ~ "Lima Metropolitana",
+                                TRUE ~ DEPARTAMEN))
+
+provincias <- st_make_valid(map_dep_lm)
+
+map_departamento <- provincias %>%
+  group_by(DEPARTAMEN) %>%  # Agrupar por el nombre del departamento (ajusta si es necesario)
+  summarise(geometry = st_union(geometry)) %>%
+  st_as_sf() %>% 
+  mutate(DEPARTAMEN = as.factor(DEPARTAMEN))
+
+```
+
+Column 
+-------------------------------------
+
+## Selección {.sidebar}
+
+```{r Barra lateral region}
+
+fluidRow(
+  inputPanel(
+    selectizeInput('x3_input', 
+                   label = 'Selecciona la región:', 
+                   choices = unique(bd_region_x$valor_estrat),
+                   options = list(
+                     placeholder = 'Escribe para filtrar',
+                     maxOptions = 30,
+                     create = FALSE
+                   )),
+    selectInput('y3_input', 
+                label = 'Selecciona el año:', 
+                choices = NULL),
+    selectInput('w3_input', 
+                label = 'Selecciona el área evaluada:', 
+                choices = NULL),
+    downloadButton("download_plot_dre", "Descargar gráfico")
+  )
+)
+
+#Relacionando los años evaluados con el grado correspondiente
+
+observeEvent(input$x3_input, {
+  
+  anhos_3 <- switch(input$x3_input,
+                  "Amazonas" = unique(bd_region_x %>% filter(valor_estrat == "Amazonas") %>% pull(Año) %>% sort(decreasing  = T)),
+                  "Apurímac" = unique(bd_region_x %>% filter(valor_estrat == "Apurímac") %>% pull(Año) %>% sort(decreasing  = T)),
+                  "Arequipa" = unique(bd_region_x %>% filter(valor_estrat == "Arequipa") %>% pull(Año) %>% sort(decreasing  = T)),
+                  "Ayacucho" = unique(bd_region_x %>% filter(valor_estrat == "Ayacucho") %>% pull(Año) %>% sort(decreasing  = T)),
+                  "Cajamarca" = unique(bd_region_x %>% filter(valor_estrat == "Cajamarca") %>% pull(Año) %>% sort(decreasing  = T)),
+                  "Callao" = unique(bd_region_x %>% filter(valor_estrat == "Callao") %>% pull(Año) %>% sort(decreasing  = T)),
+                  "Cusco" = unique(bd_region_x %>% filter(valor_estrat == "Cusco") %>% pull(Año) %>% sort(decreasing  = T)),
+                  "Huancavelica" = unique(bd_region_x %>% filter(valor_estrat == "Huancavelica") %>% pull(Año)%>% sort(decreasing  = T)),
+                  "Huánuco" = unique(bd_region_x %>% filter(valor_estrat == "Huánuco") %>% pull(Año) %>% sort(decreasing  = T)),
+                  "Ica" = unique(bd_region_x %>% filter(valor_estrat == "Ica") %>% pull(Año) %>% sort(decreasing  = T)),
+                  "Junín" = unique(bd_region_x %>% filter(valor_estrat == "Junín") %>% pull(Año) %>% sort(decreasing  = T)),
+                  "La Libertad" = unique(bd_region_x %>% filter(valor_estrat == "La Libertad") %>% pull(Año) %>% sort(decreasing  = T)),
+                  "Lambayeque" = unique(bd_region_x %>% filter(valor_estrat == "Lambayeque") %>% pull(Año) %>% sort(decreasing  = T)),
+                  "Lima Metropolitana" = unique(bd_region_x %>% filter(valor_estrat == "Lima Metropolitana") %>% pull(Año) %>% sort(decreasing  = T)),
+                  "Lima Provincias" = unique(bd_region_x %>% filter(valor_estrat == "Lima Provincias") %>% pull(Año) %>% sort(decreasing  = T)),
+                  "Loreto" = unique(bd_region_x %>% filter(valor_estrat == "Loreto") %>% pull(Año) %>% sort(decreasing  = T)),
+                  "Madre de Dios" = unique(bd_region_x %>% filter(valor_estrat == "Madre de Dios") %>% pull(Año) %>% sort(decreasing  = T)),
+                  "Moquegua" = unique(bd_region_x %>% filter(valor_estrat == "Moquegua") %>% pull(Año) %>% sort(decreasing  = T)),
+                  "Pasco" = unique(bd_region_x %>% filter(valor_estrat == "Pasco") %>% pull(Año) %>% sort(decreasing  = T)),
+                  "Piura" = unique(bd_region_x %>% filter(valor_estrat == "Piura") %>% pull(Año) %>% sort(decreasing  = T)),
+                  "Puno" = unique(bd_region_x %>% filter(valor_estrat == "Puno") %>% pull(Año) %>% sort(decreasing  = T)),
+                  "San Martín" = unique(bd_region_x %>% filter(valor_estrat == "San Martín") %>% pull(Año) %>% sort(decreasing  = T)),
+                  "Tacna" = unique(bd_region_x %>% filter(valor_estrat == "Tacna") %>% pull(Año) %>% sort(decreasing  = T)),
+                  "Tumbes" = unique(bd_region_x %>% filter(valor_estrat == "Tumbes") %>% pull(Año) %>% sort(decreasing  = T)),
+                  "Ucayali" = unique(bd_region_x %>% filter(valor_estrat == "Ucayali") %>% pull(Año) %>% sort(decreasing  = T)),
+                  "Áncash" = unique(bd_region_x %>% filter(valor_estrat == "Áncash") %>% pull(Año) %>% sort(decreasing  = T))
+  )
+  
+  updateSelectInput(session, "y3_input", choices = anhos_3)
+  
+})
+
+observeEvent(input$y3_input, {
+  
+  areas_3 <- switch(input$y3_input,
+                  "2007" = c("Matemática","Lectura"),
+                  "2008" = c("Matemática","Lectura"),
+                  "2009" = c("Matemática","Lectura"),
+                  "2010" = c("Matemática","Lectura"),
+                  "2011" = c("Matemática","Lectura"),
+                  "2012" = c("Matemática","Lectura"),
+                  "2013" = c("Matemática","Lectura"),
+                  "2014" = c("Matemática","Lectura"),
+                  "2015" = c("Matemática","Lectura"),
+                  "2016" = c("Matemática","Lectura","Ciencias sociales"),
+                  "2018" = c("Matemática","Lectura","Ciencias sociales","Ciencia y tecnología"),
+                  "2019" = c("Matemática","Lectura","Ciencia y tecnología"),
+                  "2022" = c("Matemática","Lectura","Ciencia y tecnología"),
+                  "2023" = c("Matemática","Lectura","Ciencias sociales")
+  )
+  
+  updateSelectInput(session, "w3_input", choices = areas_3)
+  
+})
+
+output$download_plot_dre <- downloadHandler(
+    filename = function() {
+      paste("grafico_DRE_", Sys.Date(), ".png", sep = "")
+    },
+    content = function(file) {
+      # Guardar el gráfico como archivo PNG
+      ggsave(file, plot = last_plot(), device = "png", width = 8, height = 6)
+    }
+  )
+
+
+```
+
+Row {data-height=9000}
+-------------------------------------
+
+### **Mapa de DREs** {data-width=600}
+
+```{r Mapa de regiones pintados}
+
+renderPlot({
+  
+  map_departamento2 <- map_departamento %>%
+    mutate(color_fill = case_when(
+      DEPARTAMEN == input$x3_input ~ "#2171b5",
+      TRUE ~ "white"
+    ))
+  
+ggplot() +
+  geom_sf(data = map_departamento2, aes(fill = color_fill)) + 
+  theme_bw() + 
+  scale_fill_identity() +
+  theme(panel.grid = element_blank(),
+        panel.border = element_blank(),
+        legend.position = "none",
+        axis.title = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank()) 
+})
+
+```
+
+### **Resultados DRE** {data-width=600}
+
+```{r Gráfico de resultados a nivel de DRE}
+
+renderPlot({
+  
+  t5 <- bd_region_x %>% 
+    filter(valor_estrat %in% input$x3_input) %>% 
+    filter(area_eval %in% input$w3_input) %>% 
+    filter(Año %in% input$y3_input)
+  
+  num5 <- length(unique(t5$valor_tipo))
+  
+  num_grado <- length(unique(t5$grado))
+  
+  if (num5 == 4) {
+    
+    pos <- t5 %>%
+      pivot_wider(names_from = valor_tipo, values_from = ptot) %>% 
+      rename(n_pi = `Previo al inicio`,n_in = `En inicio`,n_pr = `En proceso`,n_sa = Satisfactorio)
+    
+    pos1 <- pos %>%
+      mutate(pos_sa = case_when(n_sa >= 15 ~ n_sa/2,
+                                TRUE ~ n_sa + 10),
+             pos_pr = n_pr/2,
+             pos_in = n_pr + n_in/2,
+             pos_pi = case_when(n_pi >= 10 ~ n_pr + n_in + n_pi/2,
+                                TRUE ~ n_pr + n_in + n_pi + 10)) %>%
+      mutate(pos_pr = pos_pr*-1,
+             pos_in = pos_in*-1,
+             pos_pi = pos_pi*-1)
+    
+    pos2 <- pos1 %>%
+      pivot_longer(cols = starts_with("pos_"),
+                   names_to = "niv_log",
+                   values_to = "posit") %>%
+      mutate(valor_tipo = case_when(niv_log == "pos_sa" ~ "Satisfactorio",
+                                    niv_log == "pos_pr" ~ "En proceso",
+                                    niv_log == "pos_in" ~ "En inicio",
+                                    TRUE ~ "Previo al inicio")) %>% 
+      select(grado,area_eval,valor_estrat,valor_tipo,posit)
+    
+    niveles <- t5 %>%
+      left_join(pos2, by = c("grado","area_eval","valor_tipo")) %>%
+      mutate(m_etiq = puntocoma2(ptot,1),
+             ptot = case_when(valor_tipo != "Satisfactorio" ~ ptot*-1,
+                              TRUE ~ ptot)) %>%
+      mutate(valor_tipo = factor(valor_tipo,
+                                 levels = c("Previo al inicio",
+                                            "En inicio",
+                                            "En proceso",
+                                            "Satisfactorio"))) %>% 
+      mutate(grado = factor(grado,
+                            levels = c("2.° grado de primaria",
+                                       "4.° grado de primaria",
+                                       "2.° grado de secundaria")))
+    
+    ggplot(niveles, aes(x = str_wrap_factor(grado, width = 15) , 
+                        y = ptot))  +
+      geom_col(width = 0.25, 
+               aes(fill = valor_tipo)) +
+      scale_fill_manual(values = c(color_pre_in,color_inicio, color_proces, color_satisf))  +
+      scale_y_continuous(limits = c(-110, 110), n.breaks = 9) +
+      theme_bw() +
+      theme(panel.border = element_blank(),
+            panel.grid = element_blank(),
+            legend.position = "bottom",
+            legend.title = element_blank(),
+            legend.text = element_text(size = 16),
+            axis.text.y = element_blank(),
+            axis.text.x = element_text(size = 18,
+                                       color = "black"),
+            axis.ticks = element_blank(),
+            axis.title = element_blank(),
+            plot.title = element_text(hjust = 0.5, 
+                                      size = 20),
+            plot.subtitle = element_text(hjust = 0.5, 
+                                      size = 18),
+            plot.caption = element_text(hjust = 0.15, size = 11)) +
+      geom_segment(aes(x=0.8, 
+                       xend=(num_grado + 0.2), 
+                       y=0, 
+                       yend=0), 
+                   color="#737373", 
+                   linewidth = 0.5) +
+      geom_text(data = niveles, 
+                aes(label = m_etiq, 
+                    y = posit), 
+                size = 5.5, 
+                color = "black") + 
+      labs(x = " \n \n",
+           caption = str_wrap("Nota: 2.° grado de primaria no cuenta con nivel Previo al inicio, salvo para el año 2023 en el área de Matemática", width = 85),
+           title = case_when(input$w3_input %in% "Lectura" ~ "Resultado en Lectura",
+                             input$w3_input %in% "Ciencias sociales" ~ "Resultado en Ciencias sociales",
+                             input$w3_input %in% "Ciencia y tecnología" ~ "Resultado en Ciencia y tecnología",
+                             TRUE ~ "Resultado en Matemática"))
+    
+    
+  } else if (num5 == 3) {
+    
+    pos <- t5 %>%
+      pivot_wider(names_from = valor_tipo, values_from = ptot) %>% 
+      rename(n_in = `En inicio`,n_pr = `En proceso`,n_sa = Satisfactorio)
+    
+    pos1 <- pos %>%
+      mutate(pos_sa = case_when(n_sa >= 15 ~ n_sa/2,
+                                TRUE ~ n_sa + 10),
+             pos_pr = n_pr/2,
+             pos_in = case_when(n_in >= 15 ~ n_pr + n_in/2,
+                                TRUE ~ n_pr + n_in + 10)) %>%
+      mutate(pos_pr = pos_pr * -1,
+             pos_in = pos_in * -1)
+    
+    pos2 <- pos1 %>%
+      pivot_longer(cols = starts_with("pos_"),
+                   names_to = "niv_log",
+                   values_to = "posit") %>%
+      mutate(valor_tipo = case_when(
+        niv_log == "pos_sa" ~ "Satisfactorio",
+        niv_log == "pos_pr" ~ "En proceso",
+        TRUE ~ "En inicio")) %>% 
+      select(grado,area_eval,valor_estrat,valor_tipo,posit)
+    
+    niveles <- t5 %>%
+      left_join(pos2, by = c("grado","area_eval","valor_tipo")) %>%
+      mutate(m_etiq = puntocoma2(ptot,1),
+             ptot = case_when(valor_tipo != "Satisfactorio" ~ ptot*-1,
+                              TRUE ~ ptot)) %>%
+      mutate(valor_tipo = factor(valor_tipo,
+                                 levels = c("En inicio",
+                                            "En proceso",
+                                            "Satisfactorio"))) %>% 
+      mutate(grado = factor(grado,
+                            levels = c("2.° grado de primaria",
+                                       "4.° grado de primaria",
+                                       "2.° grado de secundaria")))
+    
+    ggplot(niveles, aes(x = str_wrap_factor(grado, width = 15) , 
+                        y = ptot))  +
+      geom_col(width = 0.25, 
+               aes(fill = valor_tipo)) +
+      scale_fill_manual(values = c(color_inicio, color_proces, color_satisf))  +
+      scale_y_continuous(limits = c(-110, 110), n.breaks = 9) +
+      theme_bw() +
+      theme(panel.border = element_blank(),
+            panel.grid = element_blank(),
+            legend.position = "bottom",
+            legend.title = element_blank(),
+            legend.text = element_text(size = 16),
+            axis.text.y = element_blank(),
+            axis.text.x = element_text(size = 18, color = "black"),
+            axis.ticks = element_blank(),
+            axis.title = element_blank(),
+            plot.title = element_text(hjust = 0.5, size = 20),
+            plot.caption = element_text(hjust = 0.15, size = 12)) +
+      geom_segment(aes(x=0.8, 
+                       xend=(num_grado + 0.2), 
+                       y=0, 
+                       yend=0), 
+                   color="#737373", 
+                   linewidth = 0.5) +
+      geom_text(data = niveles, 
+                aes(label = m_etiq, 
+                    y = posit), 
+                size = 5.5, 
+                color = "black") + 
+      labs(x = " \n \n",
+           caption = str_wrap("Nota: 2.° grado de primaria no cuenta con nivel Previo al inicio, salvo para el año 2023 en el área de Matemática", width = 85),
+           title = case_when(input$w3_input %in% "Lectura" ~ "Resultado en Lectura",
+                             input$w3_input %in% "Ciencias sociales" ~ "Resultado en Ciencias sociales",
+                             input$w3_input %in% "Ciencia y tecnología" ~ "Resultado en Ciencia y tecnología",
+                             TRUE ~ "Resultado en Matemática"))
+  }
+}
+)
+
+```
+
+### **Indicaciones generales** {data-width=600}
+
+<div style="font-size: 13px; font-family: 'Arial', sans-serif;">
+
+**<u>Definiciones de niveles de logro</u>**
+
+$\color{#9BBB59}{\text{Satisfactorio}}$: El estudiante logró los aprendizajes esperados para su ciclo y está preparado para afrontar los retos de aprendizaje del ciclo siguiente.
+
+$\color{#F79646}{\text{En proceso}}$: El estudiante logró parcialmente los aprendizajes esperados para su ciclo. Se encuentra en camino de lograrlos, pero todavía tiene dificultades.
+
+$\color{#A74D4B}{\text{En inicio}}$: El estudiante logró aprendizajes muy elementales respecto de lo que se espera para su ciclo.
+
+$\color{#A5A5A5}{\text{Previo al inicio}}$: El estudiante no logró los aprendizajes necesarios para estar en el nivel En inicio.
+
+**<u>Descarga de los datos</u>**
+
+- Para descargar los resultados de la tabla de abajo, hacer click en el botón que dice **"Descargar tabla en excel"**.
+- Para descargar el gráfico de resultados, hacer click en el botón del lado izquierdo que dice **"Descargar gráfico"**.
+
+**<u>Observaciones</u>**
+
+- Las regiones de Ayacucho, Cajamarca, Huancavelica y Puno no presentan resultados en algunos años debido a que no alcanzaron la cobertura de estudiantes requerida para obtener resultados confiables (80,0%). Específicamente, Ayacucho y Cajamarca no tienen datos disponibles para los años 2008, 2009, 2010 y 2011; Huancavelica no cuenta con resultados para 2008 y 2009; mientras que Puno carece de datos para 2008 y 2010.
+
+</div>
+
+Row 
+-------------------------------------
+
+## **Resultados por region y UGEL** {data-height=9000} 
+
+```{r Tabla de resultados por DRE y UGEL todas las evaluaciones}
+
+renderDT({
+  
+  bd_dre_tabla <- bd_region_x %>% 
+  filter(valor_estrat %in% input$x3_input) %>% 
+      filter(Año %in% input$y3_input) %>%
+  filter(area_eval %in% input$w3_input) %>% 
+  mutate(nom_UGEL = "DRE") %>% 
+  select(Año,operativo,nom_DRE = valor_estrat, nom_UGEL, grado, area_eval, tip_estrat, valor_tipo, ptot) %>% 
+    mutate(ptot = paste0(puntocoma2(ptot,1),"%"))
+  
+  bd_ugel_tabla <- bd_ugel %>% 
+    filter(nom_DRE %in% input$x3_input) %>% 
+    filter(Año %in% input$y3_input) %>% 
+    filter(area_eval %in% input$w3_input) %>% 
+    mutate(ptot = paste0(puntocoma2(ptot,1),"%")) %>%
+    rename(año = Año) %>% 
+    left_join(opera_nac, by = c("grado", "año")) %>%
+    filter(operativo %in% "Censal") %>% 
+    select(Año = año,operativo,nom_DRE,nom_UGEL,grado,area_eval,tip_estrat,area_eval,valor_tipo,ptot) %>% 
+    rbind(bd_dre_tabla) %>% 
+    mutate(tip_estrat = factor(tip_estrat,
+                               levels = c("DRE",
+                                          "UGEL"))) %>% 
+    arrange(tip_estrat)
+  
+  validate(
+    need(nrow(bd_ugel_tabla) > 0, "No hay datos a nivel de UGEL para este año y/o grado evaluado")
+  )
+  
+  num6 <- length(unique(bd_ugel_tabla$valor_tipo))
+  
+  if (num6 == 3) {
+    
+    bd_ugel_tabla %>% 
+      pivot_wider(names_from = valor_tipo,
+                  values_from = ptot) %>%
+      select(Año,
+             Operativo = operativo,
+             `Grado evaluado` = grado,
+             `Área evaluada` = area_eval,
+             `Estrato` = tip_estrat,
+             `Nombre DRE` = nom_DRE,
+             `Nombre UGEL` = nom_UGEL,
+             `En inicio (%)` = `En inicio`,
+             `En proceso (%)` = `En proceso`,
+             `Satisfactorio (%)` = Satisfactorio) %>% 
+      datatable(extensions = c('Buttons'),
+                options = list(dom = 'Bfrtip',
+                               buttons = list(
+                                 list(
+                                   extend = 'excel',
+                                   text = 'Descargar tabla en excel'  # Texto personalizado del botón
+                                 )
+                               ),
+                               paging = FALSE,
+                               fixedColumns = TRUE,
+                               fixedHeader = TRUE
+                )
+      )
+    
+  } else if (num6 == 4){
+    
+    bd_ugel_tabla %>% 
+      pivot_wider(names_from = valor_tipo,
+                  values_from = ptot) %>%
+      select(Año,
+             Operativo = operativo,
+             `Grado evaluado` = grado,
+             `Área evaluada` = area_eval,
+             `Estrato` = tip_estrat,
+             `Nombre DRE` = nom_DRE,
+             `Nombre UGEL` = nom_UGEL,
+             `Previo al inicio (%)` = `Previo al inicio`,
+             `En inicio (%)` = `En inicio`,
+             `En proceso (%)` = `En proceso`,
+             `Satisfactorio (%)` = Satisfactorio) %>% 
+      datatable(extensions = c('Buttons'),
+                options = list(dom = 'Bfrtip',
+                               buttons = list(
+                                 list(
+                                   extend = 'excel',
+                                   text = 'Descargar tabla en excel'  # Texto personalizado del botón
+                                 )
+                               ),
+                               paging = FALSE,
+                               fixedColumns = TRUE,
+                               fixedHeader = TRUE
+                )
+      )
+    
+  }
+  
+})
+
+
+```
+
+#  DRE en el tiempo {data-icon="fa-line-chart"}
+
+Column 
+-------------------------------------
+
+## Selección {.sidebar}
+
+```{r Barra lateral en el tiempo por región}
+
+fluidRow(
+  inputPanel(
+    selectizeInput('x4_input', 
+                   label = 'Selecciona la región:', 
+                   choices = unique(bd_region_x$valor_estrat),
+                   options = list(
+                     placeholder = 'Escribe para filtrar',
+                     maxOptions = 30,
+                     create = FALSE
+                   )),
+    selectInput('y4_input', 
+                label = 'Selecciona grado evaluado:', 
+                choices = unique(bd_region_x$grado)),
+    selectInput('w4_input', 
+                label = 'Selecciona el área evaluada:', 
+                choices = NULL),
+    selectInput('z4_input',
+                label = "Selecciona el estrato",
+                choices = NULL)
+)
+)
+
+#Relacionando el grado evaluado con el estrato seleccionado
+
+observeEvent(input$y4_input, {
+  
+  estratos_4 <- switch(input$y4_input,
+                       "2.° grado de primaria" = unique(bd_dre_estrat %>% filter(grado == "2.° grado de primaria") %>% pull(tip_subestrat)),
+                       "4.° grado de primaria" = unique(bd_dre_estrat %>% filter(grado == "4.° grado de primaria") %>% pull(tip_subestrat)),
+                       "2.° grado de secundaria" = unique(bd_dre_estrat %>% filter(grado == "2.° grado de secundaria") %>% pull(tip_subestrat))
+  )
+  
+  updateSelectInput(session, "z4_input", choices = estratos_4)
+  
+})
+
+#Relacionando el área evaluada con el grado seleccionado
+
+observeEvent(input$y4_input, {
+  
+  areas_eval_4 <- switch(input$y4_input,
+                       "2.° grado de primaria" = unique(bd_region_x %>% filter(grado == "2.° grado de primaria") %>% pull(area_eval)),
+                       "4.° grado de primaria" = unique(bd_region_x %>% filter(grado == "4.° grado de primaria") %>% pull(area_eval)),
+                       "2.° grado de secundaria" = unique(bd_region_x %>% filter(grado == "2.° grado de secundaria") %>% pull(area_eval))
+  )
+  
+  updateSelectInput(session, "w4_input", choices = areas_eval_4)
+  
+})
+
+```
+
+Row {data-height=9000}
+-------------------------------------
+
+### **Resultado en el tiempo por DRE** {data-width=1500}
+
+```{r Gráfico resultado regiones en el tiempo}
+
+renderPlot({
+  
+  t6 <- bd_region_x %>%
+    filter(valor_estrat %in% input$x4_input) %>%
+    filter(grado %in% input$y4_input) %>%
+    filter(area_eval %in% input$w4_input) %>% 
+    select(-operativo)
+  
+  num7 <- length(unique(t6$valor_tipo))
+  num_años <- length(unique(t6$Año))
+  
+  pos0 <- t6 %>%
+    pivot_wider(names_from = valor_tipo,
+                values_from = ptot) 
+  
+  if (num7 == 4) {
+    
+    pos <- pos0 %>% 
+      rename(n_pi = `Previo al inicio`,
+             n_in = `En inicio`,
+             n_pr = `En proceso`,
+             n_sa = Satisfactorio)
+    
+    pos1 <- pos %>%
+      mutate(pos_sa = case_when(n_sa >= 15 ~ n_sa/2,
+                                TRUE ~ n_sa + 10),
+             pos_pr = n_pr/2,
+             pos_in = n_pr + n_in/2,
+             pos_pi = case_when(n_pi >= 15 ~ n_pr + n_in + n_pi/2,
+                                TRUE ~ n_pr + n_in + n_pi + 10)) %>%
+      mutate(pos_pr = pos_pr*-1,
+             pos_in = pos_in*-1,
+             pos_pi = pos_pi*-1)
+    
+    pos2 <- pos1 %>%
+      pivot_longer(cols = starts_with("pos_"),
+                   names_to = "niv_log",
+                   values_to = "posit") %>%
+      mutate(valor_tipo = case_when(niv_log == "pos_sa" ~ "Satisfactorio",
+                                    niv_log == "pos_pr" ~ "En proceso",
+                                    niv_log == "pos_in" ~ "En inicio",
+                                    TRUE ~ "Previo al inicio")) %>% 
+      select(grado,area_eval,Año,valor_estrat,valor_tipo,posit)
+    
+    niveles <- t6 %>%
+      left_join(pos2, by = c("grado","area_eval","Año","valor_tipo")) %>%
+      mutate(m_etiq = puntocoma2(ptot,1),
+             ptot = case_when(valor_tipo != "Satisfactorio" ~ ptot*-1,
+                              TRUE ~ ptot)) %>%
+      mutate(valor_tipo = factor(valor_tipo,
+                                 levels = c("Previo al inicio",
+                                            "En inicio",
+                                            "En proceso",
+                                            "Satisfactorio")))
+    
+    ggplot(niveles, aes(x = Año,
+                        y = ptot))  +
+      geom_col(width = 0.50,
+               aes(fill = valor_tipo)) +
+      scale_fill_manual(values = c(color_pre_in,color_inicio, color_proces, color_satisf))  +
+      scale_y_continuous(limits = c(-110, 90), n.breaks = 9) +
+      theme_bw() +
+      theme(panel.border = element_blank(),
+            panel.grid = element_blank(),
+            legend.position = "bottom",
+            legend.title = element_blank(),
+            legend.text = element_text(size = 16),
+            axis.text.y = element_blank(),
+            axis.text.x = element_text(size = 18, color = "black"),
+            axis.ticks = element_blank(),
+            axis.title = element_blank(),
+            plot.title = element_text(hjust = 0.5, size = 20),
+            plot.subtitle = element_text(hjust = 0.5, size = 18),
+            plot.caption = element_text(hjust = 0.15, size = 12)) +
+      geom_segment(aes(x=0.6,
+                       xend=(num_años + 0.4),
+                       y=0,
+                       yend=0),
+                   color="#737373",
+                   linewidth = 0.5) +
+      geom_text(data = niveles,
+                aes(label = m_etiq,
+                    y = posit),
+                size = 5.0,
+                color = "black") +
+      labs(title = input$y4_input,
+           subtitle = input$w4_input
+           )
+    
+  } else if (num7 == 3) {
+    
+    pos <- pos0 %>% 
+      rename(n_in = `En inicio`,
+             n_pr = `En proceso`,
+             n_sa = Satisfactorio)
+    
+    pos1 <- pos %>%
+      mutate(pos_sa = case_when(n_sa >= 15 ~ n_sa/2,
+                                TRUE ~ n_sa + 10),
+             pos_pr = n_pr/2,
+             pos_in = case_when(n_in >= 15 ~ n_pr + n_in/2,
+                                TRUE ~ n_pr + n_in + 10)) %>%
+      mutate(pos_pr = pos_pr * -1,
+             pos_in = pos_in * -1)
+    
+    pos2 <- pos1 %>%
+      pivot_longer(cols = starts_with("pos_"),
+                   names_to = "niv_log",
+                   values_to = "posit") %>%
+      mutate(valor_tipo = case_when(
+        niv_log == "pos_sa" ~ "Satisfactorio",
+        niv_log == "pos_pr" ~ "En proceso",
+        TRUE ~ "En inicio")) %>% 
+      select(grado,area_eval,Año,valor_estrat,valor_tipo,posit)
+    
+    niveles <- t6 %>%
+      left_join(pos2, by = c("valor_estrat","grado","area_eval","Año","valor_tipo")) %>%
+      mutate(m_etiq = puntocoma2(ptot,1),
+             ptot = case_when(valor_tipo != "Satisfactorio" ~ ptot*-1,
+                              TRUE ~ ptot)) %>%
+      mutate(valor_tipo = factor(valor_tipo,
+                                 levels = c("En inicio",
+                                            "En proceso",
+                                            "Satisfactorio")))
+    
+    ggplot(niveles, aes(x = Año,
+                        y = ptot))  +
+      geom_col(width = 0.50,
+               aes(fill = valor_tipo)) +
+      scale_fill_manual(values = c(color_inicio, color_proces, color_satisf))  +
+      scale_y_continuous(limits = c(-110, 90), n.breaks = 9) +
+      theme_bw() +
+      theme(panel.border = element_blank(),
+            panel.grid = element_blank(),
+            legend.position = "bottom",
+            legend.title = element_blank(),
+            legend.text = element_text(size = 16),
+            axis.text.y = element_blank(),
+            axis.text.x = element_text(size = 18, color = "black"),
+            axis.ticks = element_blank(),
+            axis.title = element_blank(),
+            plot.title = element_text(hjust = 0.5, size = 20),
+            plot.subtitle = element_text(hjust = 0.5, size = 18),
+            plot.caption = element_text(hjust = 0.15, size = 12)) +
+      geom_segment(aes(x=0.6,
+                       xend=(num_años + 0.4),
+                       y=0,
+                       yend=0),
+                   color="#737373",
+                   linewidth = 0.5) +
+      geom_text(data = niveles,
+                aes(label = m_etiq,
+                    y = posit),
+                size = 5.0,
+                color = "black") +
+      labs(title = input$y4_input,
+           subtitle = input$w4_input
+           )
+  }
+  
+}
+# width = 480, height =380
+)
+
+```
+
+### **Indicaciones generales**
+
+<div style="font-size: 13px; font-family: 'Arial', sans-serif;">
+
+**<u>Definiciones de niveles de logro</u>**
+
+$\color{#9BBB59}{\text{Satisfactorio}}$: El estudiante logró los aprendizajes esperados para su ciclo y está preparado para afrontar los retos de aprendizaje del ciclo siguiente.
+
+$\color{#F79646}{\text{En proceso}}$: El estudiante logró parcialmente los aprendizajes esperados para su ciclo. Se encuentra en camino de lograrlos, pero todavía tiene dificultades.
+
+$\color{#A74D4B}{\text{En inicio}}$: El estudiante logró aprendizajes muy elementales respecto de lo que se espera para su ciclo.
+
+$\color{#A5A5A5}{\text{Previo al inicio}}$: El estudiante no logró los aprendizajes necesarios para estar en el nivel En inicio.
+
+</div>
+
+Row {data-height=10000}
+-------------------------------------
+
+### **Resultados por estrato 1**
+
+```{r Gráfico estrato 1}
+
+renderPlot({
+  
+  temp1 <- bd_dre_estrat %>% 
+    rename(año = Año) %>% 
+    left_join(opera_nac, by = c("grado", "año")) %>%
+    filter(!operativo %in% "Muestral nacional") %>% 
+    select(-operativo) %>% 
+    rename(Año = año) %>% 
+    filter(nom_DRE %in% input$x4_input) %>% 
+    filter(tip_subestrat %in% input$z4_input) %>% 
+    filter(grado %in% input$y4_input) %>% 
+    filter(area_eval %in% input$w4_input)
+  
+  nom_estrat <- unique(temp1$valor_estrat)
+  
+  t7 <- temp1 %>% 
+    filter(valor_estrat %in% nom_estrat[[1]]) %>% 
+    select(Año,valor_estrat,grado,area_eval,valor_tipo,ptot)
+  
+  num8 <- length(unique(t7$valor_tipo))
+  num_años <- length(unique(t7$Año))
+  
+  pos0 <- t7 %>%
+    pivot_wider(names_from = valor_tipo,
+                values_from = ptot) 
+  
+  if (num8 == 4) {
+    
+    pos <- pos0 %>% 
+      rename(n_pi = `Previo al inicio`,
+             n_in = `En inicio`,
+             n_pr = `En proceso`,
+             n_sa = Satisfactorio)
+    
+    pos1 <- pos %>%
+      mutate(pos_sa = case_when(n_sa >= 15 ~ n_sa/2,
+                                TRUE ~ n_sa + 10),
+             pos_pr = n_pr/2,
+             pos_in = n_pr + n_in/2,
+             pos_pi = case_when(n_pi >= 15 ~ n_pr + n_in + n_pi/2,
+                                TRUE ~ n_pr + n_in + n_pi + 10)) %>%
+      mutate(pos_pr = pos_pr*-1,
+             pos_in = pos_in*-1,
+             pos_pi = pos_pi*-1)
+    
+    pos2 <- pos1 %>%
+      pivot_longer(cols = starts_with("pos_"),
+                   names_to = "niv_log",
+                   values_to = "posit") %>%
+      mutate(valor_tipo = case_when(niv_log == "pos_sa" ~ "Satisfactorio",
+                                    niv_log == "pos_pr" ~ "En proceso",
+                                    niv_log == "pos_in" ~ "En inicio",
+                                    TRUE ~ "Previo al inicio")) %>% 
+      select(grado,area_eval,Año,valor_estrat,valor_tipo,posit)
+    
+    niveles <- t7 %>%
+      left_join(pos2, by = c("grado","area_eval","Año","valor_tipo")) %>%
+      mutate(m_etiq = puntocoma2(ptot,1),
+             ptot = case_when(valor_tipo != "Satisfactorio" ~ ptot*-1,
+                              TRUE ~ ptot)) %>%
+      mutate(valor_tipo = factor(valor_tipo,
+                                 levels = c("Previo al inicio",
+                                            "En inicio",
+                                            "En proceso",
+                                            "Satisfactorio")))
+    
+    ggplot(niveles, aes(x = Año,
+                        y = ptot))  +
+      geom_col(width = 0.50,
+               aes(fill = valor_tipo)) +
+      scale_fill_manual(values = c(color_pre_in,color_inicio, color_proces, color_satisf))  +
+      scale_y_continuous(limits = c(-110, 90), n.breaks = 9) +
+      theme_bw() +
+      theme(panel.border = element_blank(),
+            panel.grid = element_blank(),
+            legend.position = "bottom",
+            legend.title = element_blank(),
+            legend.text = element_text(size = 16),
+            axis.text.y = element_blank(),
+            axis.text.x = element_text(size = 18, color = "black"),
+            axis.ticks = element_blank(),
+            axis.title = element_blank(),
+            plot.title = element_text(hjust = 0.5, size = 20),
+            plot.subtitle = element_text(hjust = 0.5, size = 18),
+            plot.caption = element_text(hjust = 0.15, size = 12)) +
+      geom_segment(aes(x=0.6,
+                       xend=(num_años + 0.4),
+                       y=0,
+                       yend=0),
+                   color="#737373",
+                   linewidth = 0.5) +
+      geom_text(data = niveles,
+                aes(label = m_etiq,
+                    y = posit),
+                size = 5.0,
+                color = "black") +
+      labs(title = input$y4_input,
+           subtitle = paste0(input$x4_input," - ",nom_estrat[[1]])
+      )
+    
+  } else if (num8 == 3) {
+    
+    pos <- pos0 %>% 
+      rename(n_in = `En inicio`,
+             n_pr = `En proceso`,
+             n_sa = Satisfactorio)
+    
+    pos1 <- pos %>%
+      mutate(pos_sa = case_when(n_sa >= 15 ~ n_sa/2,
+                                TRUE ~ n_sa + 10),
+             pos_pr = n_pr/2,
+             pos_in = case_when(n_in >= 15 ~ n_pr + n_in/2,
+                                TRUE ~ n_pr + n_in + 10)) %>%
+      mutate(pos_pr = pos_pr * -1,
+             pos_in = pos_in * -1)
+    
+    pos2 <- pos1 %>%
+      pivot_longer(cols = starts_with("pos_"),
+                   names_to = "niv_log",
+                   values_to = "posit") %>%
+      mutate(valor_tipo = case_when(
+        niv_log == "pos_sa" ~ "Satisfactorio",
+        niv_log == "pos_pr" ~ "En proceso",
+        TRUE ~ "En inicio")) %>% 
+      select(grado,area_eval,Año,valor_estrat,valor_tipo,posit)
+    
+    niveles <- t7 %>%
+      left_join(pos2, by = c("grado","area_eval","Año","valor_tipo")) %>%
+      mutate(m_etiq = puntocoma2(ptot,1),
+             ptot = case_when(valor_tipo != "Satisfactorio" ~ ptot*-1,
+                              TRUE ~ ptot)) %>%
+      mutate(valor_tipo = factor(valor_tipo,
+                                 levels = c("En inicio",
+                                            "En proceso",
+                                            "Satisfactorio")))
+    
+    ggplot(niveles, aes(x = Año,
+                        y = ptot))  +
+      geom_col(width = 0.50,
+               aes(fill = valor_tipo)) +
+      scale_fill_manual(values = c(color_inicio, color_proces, color_satisf))  +
+      scale_y_continuous(limits = c(-110, 90), n.breaks = 9) +
+      theme_bw() +
+      theme(panel.border = element_blank(),
+            panel.grid = element_blank(),
+            legend.position = "bottom",
+            legend.title = element_blank(),
+            legend.text = element_text(size = 16),
+            axis.text.y = element_blank(),
+            axis.text.x = element_text(size = 18, color = "black"),
+            axis.ticks = element_blank(),
+            axis.title = element_blank(),
+            plot.title = element_text(hjust = 0.5, size = 20),
+            plot.subtitle = element_text(hjust = 0.5, size = 18),
+            plot.caption = element_text(hjust = 0.15, size = 12)) +
+      geom_segment(aes(x=0.6,
+                       xend=(num_años + 0.4),
+                       y=0,
+                       yend=0),
+                   color="#737373",
+                   linewidth = 0.5) +
+      geom_text(data = niveles,
+                aes(label = m_etiq,
+                    y = posit),
+                size = 5.0,
+                color = "black") +
+      labs(title = input$y4_input,
+           subtitle = paste0(input$x4_input," - ",nom_estrat[[1]])
+      )
+  }
+  
+}
+)
+
+```
+
+### **Resultados por estrato 2**
+
+```{r Gráfico estrato 2}
+
+renderPlot({
+  
+  temp1 <- bd_dre_estrat %>% 
+    rename(año = Año) %>% 
+    left_join(opera_nac, by = c("grado", "año")) %>%
+    filter(!operativo %in% "Muestral nacional") %>% 
+    select(-operativo) %>% 
+    rename(Año = año) %>% 
+    filter(nom_DRE %in% input$x4_input) %>% 
+    filter(tip_subestrat %in% input$z4_input) %>% 
+    filter(grado %in% input$y4_input) %>% 
+    filter(area_eval %in% input$w4_input)
+  
+  nom_estrat <- unique(temp1$valor_estrat)
+  
+  t7 <- temp1 %>% 
+    filter(valor_estrat %in% nom_estrat[[2]]) %>% 
+    select(Año,valor_estrat,grado,area_eval,valor_tipo,ptot)
+  
+  num8 <- length(unique(t7$valor_tipo))
+  num_años <- length(unique(t7$Año))
+  
+  pos0 <- t7 %>%
+    pivot_wider(names_from = valor_tipo,
+                values_from = ptot) 
+  
+  if (num8 == 4) {
+    
+    pos <- pos0 %>% 
+      rename(n_pi = `Previo al inicio`,
+             n_in = `En inicio`,
+             n_pr = `En proceso`,
+             n_sa = Satisfactorio)
+    
+    pos1 <- pos %>%
+      mutate(pos_sa = case_when(n_sa >= 15 ~ n_sa/2,
+                                TRUE ~ n_sa + 10),
+             pos_pr = n_pr/2,
+             pos_in = n_pr + n_in/2,
+             pos_pi = case_when(n_pi >= 15 ~ n_pr + n_in + n_pi/2,
+                                TRUE ~ n_pr + n_in + n_pi + 10)) %>%
+      mutate(pos_pr = pos_pr*-1,
+             pos_in = pos_in*-1,
+             pos_pi = pos_pi*-1)
+    
+    pos2 <- pos1 %>%
+      pivot_longer(cols = starts_with("pos_"),
+                   names_to = "niv_log",
+                   values_to = "posit") %>%
+      mutate(valor_tipo = case_when(niv_log == "pos_sa" ~ "Satisfactorio",
+                                    niv_log == "pos_pr" ~ "En proceso",
+                                    niv_log == "pos_in" ~ "En inicio",
+                                    TRUE ~ "Previo al inicio")) %>% 
+      select(grado,area_eval,Año,valor_estrat,valor_tipo,posit)
+    
+    niveles <- t7 %>%
+      left_join(pos2, by = c("grado","area_eval","Año","valor_tipo")) %>%
+      mutate(m_etiq = puntocoma2(ptot,1),
+             ptot = case_when(valor_tipo != "Satisfactorio" ~ ptot*-1,
+                              TRUE ~ ptot)) %>%
+      mutate(valor_tipo = factor(valor_tipo,
+                                 levels = c("Previo al inicio",
+                                            "En inicio",
+                                            "En proceso",
+                                            "Satisfactorio")))
+    
+    ggplot(niveles, aes(x = Año,
+                        y = ptot))  +
+      geom_col(width = 0.50,
+               aes(fill = valor_tipo)) +
+      scale_fill_manual(values = c(color_pre_in,color_inicio, color_proces, color_satisf))  +
+      scale_y_continuous(limits = c(-110, 90), n.breaks = 9) +
+      theme_bw() +
+      theme(panel.border = element_blank(),
+            panel.grid = element_blank(),
+            legend.position = "bottom",
+            legend.title = element_blank(),
+            legend.text = element_text(size = 16),
+            axis.text.y = element_blank(),
+            axis.text.x = element_text(size = 18, color = "black"),
+            axis.ticks = element_blank(),
+            axis.title = element_blank(),
+            plot.title = element_text(hjust = 0.5, size = 20),
+            plot.subtitle = element_text(hjust = 0.5, size = 18),
+            plot.caption = element_text(hjust = 0.15, size = 12)) +
+      geom_segment(aes(x=0.6,
+                       xend=(num_años + 0.4),
+                       y=0,
+                       yend=0),
+                   color="#737373",
+                   linewidth = 0.5) +
+      geom_text(data = niveles,
+                aes(label = m_etiq,
+                    y = posit),
+                size = 5.0,
+                color = "black") +
+      labs(title = input$y4_input,
+           subtitle = paste0(input$x4_input," - ",nom_estrat[[2]])
+      )
+    
+  } else if (num8 == 3) {
+    
+    pos <- pos0 %>% 
+      rename(n_in = `En inicio`,
+             n_pr = `En proceso`,
+             n_sa = Satisfactorio)
+    
+    pos1 <- pos %>%
+      mutate(pos_sa = case_when(n_sa >= 15 ~ n_sa/2,
+                                TRUE ~ n_sa + 10),
+             pos_pr = n_pr/2,
+             pos_in = case_when(n_in >= 15 ~ n_pr + n_in/2,
+                                TRUE ~ n_pr + n_in + 10)) %>%
+      mutate(pos_pr = pos_pr * -1,
+             pos_in = pos_in * -1)
+    
+    pos2 <- pos1 %>%
+      pivot_longer(cols = starts_with("pos_"),
+                   names_to = "niv_log",
+                   values_to = "posit") %>%
+      mutate(valor_tipo = case_when(
+        niv_log == "pos_sa" ~ "Satisfactorio",
+        niv_log == "pos_pr" ~ "En proceso",
+        TRUE ~ "En inicio")) %>% 
+      select(grado,area_eval,Año,valor_estrat,valor_tipo,posit)
+    
+    niveles <- t7 %>%
+      left_join(pos2, by = c("grado","area_eval","Año","valor_tipo")) %>%
+      mutate(m_etiq = puntocoma2(ptot,1),
+             ptot = case_when(valor_tipo != "Satisfactorio" ~ ptot*-1,
+                              TRUE ~ ptot)) %>%
+      mutate(valor_tipo = factor(valor_tipo,
+                                 levels = c("En inicio",
+                                            "En proceso",
+                                            "Satisfactorio")))
+    
+    ggplot(niveles, aes(x = Año,
+                        y = ptot))  +
+      geom_col(width = 0.50,
+               aes(fill = valor_tipo)) +
+      scale_fill_manual(values = c(color_inicio, color_proces, color_satisf))  +
+      scale_y_continuous(limits = c(-110, 90), n.breaks = 9) +
+      theme_bw() +
+      theme(panel.border = element_blank(),
+            panel.grid = element_blank(),
+            legend.position = "bottom",
+            legend.title = element_blank(),
+            legend.text = element_text(size = 16),
+            axis.text.y = element_blank(),
+            axis.text.x = element_text(size = 18, color = "black"),
+            axis.ticks = element_blank(),
+            axis.title = element_blank(),
+            plot.title = element_text(hjust = 0.5, size = 20),
+            plot.subtitle = element_text(hjust = 0.5, size = 18),
+            plot.caption = element_text(hjust = 0.15, size = 12)) +
+      geom_segment(aes(x=0.6,
+                       xend=(num_años + 0.4),
+                       y=0,
+                       yend=0),
+                   color="#737373",
+                   linewidth = 0.5) +
+      geom_text(data = niveles,
+                aes(label = m_etiq,
+                    y = posit),
+                size = 5.0,
+                color = "black") +
+      labs(title = input$y4_input,
+           subtitle = paste0(input$x4_input," - ",nom_estrat[[2]])
+      )
+  }
+  
+}
+)
+
+```
